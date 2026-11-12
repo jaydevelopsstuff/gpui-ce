@@ -244,10 +244,9 @@ pub fn action_for_text_command(command: &str) -> Option<Box<dyn gpui::Action>> {
         "deleteToBeginningOfLine:" | "deleteToBeginningOfParagraph:" => Box::new(DeleteToLineStart),
         "deleteToEndOfLine:" | "deleteToEndOfParagraph:" => Box::new(DeleteToLineEnd),
         "selectAll:" => Box::new(SelectAll),
-        "insertNewline:" | "insertNewlineIgnoringFieldEditor:" | "insertLineBreak:" => {
-            Box::new(Enter)
-        }
-        "insertTab:" | "insertTabIgnoringFieldEditor:" => Box::new(Tab),
+        // Not the `...IgnoringFieldEditor:` ones: ctrl-o's first command, say, would submit
+        "insertNewline:" | "insertLineBreak:" => Box::new(Enter),
+        "insertTab:" => Box::new(Tab),
         "cancelOperation:" => Box::new(Escape),
         _ => return None,
     })
