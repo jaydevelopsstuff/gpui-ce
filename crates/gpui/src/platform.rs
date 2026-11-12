@@ -2221,6 +2221,14 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
+    /// See [`InputHandler::perform_text_command`].
+    #[allow(dead_code)]
+    pub fn perform_text_command(&mut self, command: &str) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.perform_text_command(command, window, cx))
+            .unwrap_or(false)
+    }
+
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
@@ -2509,6 +2517,20 @@ pub trait InputHandler: 'static {
     /// Returns whether this handler is accepting text input to be inserted.
     fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
+    }
+
+    /// Performs a text command the platform chose for a keystroke from its own
+    /// key bindings and the user's, such as one of AppKit's
+    /// `NSStandardKeyBindingResponding` selectors (`"moveWordLeft:"`,
+    /// `"deleteToBeginningOfLine:"`). Returns whether it was handled; if not, the
+    /// keystroke goes through the keymap.
+    fn perform_text_command(
+        &mut self,
+        _command: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> bool {
+        false
     }
 
     /// The contiguous range of text, in UTF-16 code units, that platform text

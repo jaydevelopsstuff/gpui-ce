@@ -197,6 +197,62 @@ pub fn default_bindings() -> gpui::ActionBindingCollection {
     bindings
 }
 
+/// The action for one of AppKit's text commands (`NSStandardKeyBindingResponding`
+/// selectors), which macOS picks for a keystroke from `StandardKeyBinding.dict` and the
+/// user's `~/Library/KeyBindings/DefaultKeyBinding.dict`. Commands without an action here
+/// leave the keystroke to the keymap.
+pub fn action_for_text_command(command: &str) -> Option<Box<dyn gpui::Action>> {
+    Some(match command {
+        "moveLeft:" | "moveBackward:" => Box::new(NavLeft),
+        "moveRight:" | "moveForward:" => Box::new(NavRight),
+        "moveUp:" => Box::new(NavUp),
+        "moveDown:" => Box::new(NavDown),
+        "moveWordLeft:" | "moveWordBackward:" => Box::new(NavWordLeft),
+        "moveWordRight:" | "moveWordForward:" => Box::new(NavWordRight),
+        "moveToBeginningOfLine:" | "moveToLeftEndOfLine:" | "moveToBeginningOfParagraph:" => {
+            Box::new(NavLineStart)
+        }
+        "moveToEndOfLine:" | "moveToRightEndOfLine:" | "moveToEndOfParagraph:" => {
+            Box::new(NavLineEnd)
+        }
+        "moveToBeginningOfDocument:" => Box::new(NavDocumentStart),
+        "moveToEndOfDocument:" => Box::new(NavDocumentEnd),
+        "moveLeftAndModifySelection:" | "moveBackwardAndModifySelection:" => Box::new(SelectLeft),
+        "moveRightAndModifySelection:" | "moveForwardAndModifySelection:" => Box::new(SelectRight),
+        "moveUpAndModifySelection:" => Box::new(SelectUp),
+        "moveDownAndModifySelection:" => Box::new(SelectDown),
+        "moveWordLeftAndModifySelection:" | "moveWordBackwardAndModifySelection:" => {
+            Box::new(SelectWordLeft)
+        }
+        "moveWordRightAndModifySelection:" | "moveWordForwardAndModifySelection:" => {
+            Box::new(SelectWordRight)
+        }
+        "moveToBeginningOfLineAndModifySelection:"
+        | "moveToLeftEndOfLineAndModifySelection:"
+        | "moveToBeginningOfParagraphAndModifySelection:"
+        | "moveParagraphBackwardAndModifySelection:" => Box::new(SelectLineStart),
+        "moveToEndOfLineAndModifySelection:"
+        | "moveToRightEndOfLineAndModifySelection:"
+        | "moveToEndOfParagraphAndModifySelection:"
+        | "moveParagraphForwardAndModifySelection:" => Box::new(SelectLineEnd),
+        "moveToBeginningOfDocumentAndModifySelection:" => Box::new(SelectDocumentStart),
+        "moveToEndOfDocumentAndModifySelection:" => Box::new(SelectDocumentEnd),
+        "deleteBackward:" | "deleteBackwardByDecomposingPreviousCharacter:" => Box::new(DeleteLeft),
+        "deleteForward:" => Box::new(DeleteRight),
+        "deleteWordBackward:" => Box::new(DeleteWordLeft),
+        "deleteWordForward:" => Box::new(DeleteWordRight),
+        "deleteToBeginningOfLine:" | "deleteToBeginningOfParagraph:" => Box::new(DeleteToLineStart),
+        "deleteToEndOfLine:" | "deleteToEndOfParagraph:" => Box::new(DeleteToLineEnd),
+        "selectAll:" => Box::new(SelectAll),
+        "insertNewline:" | "insertNewlineIgnoringFieldEditor:" | "insertLineBreak:" => {
+            Box::new(Enter)
+        }
+        "insertTab:" | "insertTabIgnoringFieldEditor:" => Box::new(Tab),
+        "cancelOperation:" => Box::new(Escape),
+        _ => return None,
+    })
+}
+
 /// Declares stubs for all editable-text actions that an element's state entity can implement.
 pub trait EditableTextActionHandler<Context>: Sized {
     /// Blur focus from the input.

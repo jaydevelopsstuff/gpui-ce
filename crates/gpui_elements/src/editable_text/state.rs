@@ -1133,6 +1133,21 @@ impl EntityInputHandler for EditableTextState {
         let index = self.index_for_pixel_point(point, window.line_height());
         Some(self.storage.utf_offset_8to16(index))
     }
+
+    fn perform_text_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        // Dispatched, so the input's own action listeners and its ancestors' see it as they
+        // would the keymap's
+        let Some(action) = crate::editable_text::actions::action_for_text_command(command) else {
+            return false;
+        };
+        window.dispatch_action(action, cx);
+        true
+    }
 }
 
 // Input Action handler

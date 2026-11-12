@@ -1568,6 +1568,45 @@ mod tests {
     }
 
     #[test]
+    fn the_platforms_text_commands_run_the_inputs_actions() {
+        let mut fixture = BidiInputFixture::new("hello big world", 8.0, 300.0, false, 1.0);
+        let input = fixture.input.clone();
+        let window = fixture.window;
+        fixture
+            .cx
+            .update_window(window.into(), |_, window, cx| {
+                let focus = input.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+                input.update(cx, |state, cx| state.move_to(15, cx));
+            })
+            .unwrap();
+        fixture.cx.run_until_parked();
+
+        let mut perform = |command: &str| {
+            let performed = fixture
+                .cx
+                .update_window(window.into(), |_, window, cx| {
+                    input.update(cx, |state, cx| state.perform_text_command(command, window, cx))
+                })
+                .unwrap();
+            fixture.cx.run_until_parked();
+            performed
+        };
+        // AppKit's selectors for option-backspace, cmd-left and shift-cmd-right
+        assert!(perform("deleteWordBackward:"));
+        assert!(perform("moveToBeginningOfLine:"));
+        assert!(perform("moveToEndOfLineAndModifySelection:"));
+        // One the input has no action for goes to the keymap
+        assert!(!perform("transpose:"));
+
+        fixture.cx.update(|cx| {
+            let state = input.read(cx);
+            assert_eq!(state.as_str(), "hello big ");
+            assert_eq!(state.selected_byte_range(), 0..10);
+        });
+    }
+
+    #[test]
     fn rtl_editable_overflow_starts_at_the_right_and_remains_reachable() {
         let mut fixture = BidiInputFixture::new_with_direction(
             "English text that is much wider than the input",

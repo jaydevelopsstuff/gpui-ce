@@ -841,6 +841,9 @@ struct MacWindowState {
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
+    /// While a key equivalent goes through the key bindings for a text command,
+    /// which mustn't insert its characters.
+    interpreting_commands_only: bool,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
@@ -1285,6 +1288,7 @@ impl MacWindow {
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
+                interpreting_commands_only: false,
                 external_files_dragged: false,
                 first_mouse: false,
                 app_owns_titlebar_drag,
@@ -2907,9 +2911,11 @@ unsafe extern "C" fn handle_key_event(
             }
 
             // Don't send key equivalents to the input handler if there are key modifiers other
-            // than Function key, or macOS shortcuts like cmd-` will stop working.
+            // than Function key, or macOS shortcuts like cmd-` will stop working. A text input
+            // still gets the text command the key bindings give the key (cmd-left is
+            // moveToLeftEndOfLine:), before the menu, as AppKit's text views do.
             if key_equivalent && key_down_event.keystroke.modifiers != Modifiers::function() {
-                return Bool::new(false);
+                return Bool::new(unsafe { perform_key_binding_command(this, native_event) });
             }
 
             unsafe {
@@ -3481,12 +3487,45 @@ fn get_frame(this: &Objc2Object) -> Objc2NSRect {
     }
 }
 
+/// Runs `native_event` through the key bindings (`StandardKeyBinding.dict` and the user's
+/// `DefaultKeyBinding.dict`) for a text command only, returning whether the input handler
+/// performed one.
+unsafe fn perform_key_binding_command(this: &Objc2Object, native_event: ObjcId) -> bool {
+    if with_input_handler(this, |_| ()).is_none() {
+        return false;
+    }
+    let window_state = unsafe { get_window_state(this) };
+    {
+        let mut lock = window_state.as_ref().lock();
+        lock.keystroke_for_do_command = None;
+        lock.do_command_handled = None;
+        lock.interpreting_commands_only = true;
+    }
+    unsafe {
+        let events: ObjcId = msg_send![class!(NSArray), arrayWithObject: native_event];
+        let _: () = msg_send![this, interpretKeyEvents: events];
+    }
+    let mut lock = window_state.as_ref().lock();
+    lock.interpreting_commands_only = false;
+    lock.do_command_handled.take().unwrap_or(false)
+}
+
+fn interpreting_commands_only(this: &Objc2Object) -> bool {
+    unsafe { get_window_state(this) }
+        .as_ref()
+        .lock()
+        .interpreting_commands_only
+}
+
 unsafe extern "C" fn insert_text(
     this: &Objc2Object,
     _: Sel,
     text: ObjcId,
     replacement_range: NSRange,
 ) {
+    if interpreting_commands_only(this) {
+        return;
+    }
     unsafe {
         let is_attributed_string: Bool = msg_send![text, isKindOfClass: class!(NSAttributedString)];
         let text: ObjcId = if is_attributed_string == Bool::new(true) {
@@ -3510,6 +3549,9 @@ unsafe extern "C" fn set_marked_text(
     selected_range: NSRange,
     replacement_range: NSRange,
 ) {
+    if interpreting_commands_only(this) {
+        return;
+    }
     unsafe {
         let is_attributed_string: Bool = msg_send![text, isKindOfClass: class!(NSAttributedString)];
         let text: ObjcId = if is_attributed_string == Bool::new(true) {
@@ -3558,10 +3600,24 @@ unsafe extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(NIL)
 }
 
-// We ignore which selector it asks us to do because the user may have
-// bound the shortcut to something else.
-unsafe extern "C" fn do_command_by_selector(this: &Objc2Object, _: Sel, _: Sel) {
+// A text input that knows the selector's command performs it, so the user's
+// `DefaultKeyBinding.dict` applies. Otherwise we ignore which selector it asks
+// us to do because the user may have bound the shortcut to something else.
+unsafe extern "C" fn do_command_by_selector(this: &Objc2Object, _: Sel, selector: Sel) {
     let state = unsafe { get_window_state(this) };
+    let performed = selector.name().to_str().is_ok_and(|command| {
+        with_input_handler(this, |input_handler| {
+            input_handler.perform_text_command(command)
+        })
+        .unwrap_or(false)
+    });
+    if performed {
+        let mut lock = state.as_ref().lock();
+        lock.keystroke_for_do_command = None;
+        lock.do_command_handled = Some(true);
+        return;
+    }
+
     let mut lock = state.as_ref().lock();
     let keystroke = lock.keystroke_for_do_command.take();
     let mut event_callback = lock.event_callback.take();

@@ -130,6 +130,16 @@ pub trait EntityInputHandler: 'static + Sized {
         true
     }
 
+    /// See [`InputHandler::perform_text_command`] for details
+    fn perform_text_command(
+        &mut self,
+        _command: &str,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        false
+    }
+
     /// See [`InputHandler::text_input_configuration`] for details
     fn text_input_configuration(
         &mut self,
@@ -288,6 +298,12 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.view
             .update(cx, |view, cx| view.accepts_text_input(window, cx))
+    }
+
+    fn perform_text_command(&mut self, command: &str, window: &mut Window, cx: &mut App) -> bool {
+        self.view.update(cx, |view, cx| {
+            view.perform_text_command(command, window, cx)
+        })
     }
 
     fn text_input_configuration(
