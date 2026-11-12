@@ -57,6 +57,8 @@ gpui::actions!(
         /// Extend selection down one visual line.
         SelectDown,
         /// Extend selection to the beginning of the content.
+        SelectLineStart,
+        SelectLineEnd,
         SelectDocumentStart,
         /// Extend selection to the end of the content.
         SelectDocumentEnd,
@@ -98,8 +100,8 @@ gpui::actions!(
 /// | NavRight              | 🡆          |                           |                  |
 /// | NavUp                 | 🡅          |                           |                  |
 /// | NavDown               | 🡇          |                           |                  |
-/// | NavLineStart          | shift + home | home                      | cmd + 🡄, cmd + shift + 🡄 |
-/// | NavLineEnd            | shift + end  | end                       | cmd + 🡆, cmd + shift + 🡆 |
+/// | NavLineStart          | shift + home | home                      | cmd + 🡄         |
+/// | NavLineEnd            | shift + end  | end                       | cmd + 🡆         |
 /// | NavDocumentStart      |             | ctrl + home               | cmd + 🡅         |
 /// | NavDocumentEnd        |             | ctrl + end                | cmd + 🡇         |
 /// | NavWordLeft           |             | ctrl + 🡄                 | alt + 🡄         |
@@ -109,6 +111,8 @@ gpui::actions!(
 /// | SelectRight           | shift + 🡆  |                           |                  |
 /// | SelectUp              | shift + 🡅  |                           |                  |
 /// | SelectDown            | shift + 🡇  |                           |                  |
+/// | SelectLineStart       |             |                           | cmd + shift + 🡄 |
+/// | SelectLineEnd         |             |                           | cmd + shift + 🡆 |
 /// | SelectDocumentStart   |             | ctrl + shift + home       | cmd + shift + 🡅 |
 /// | SelectDocumentEnd     |             | ctrl + shift + end        | cmd + shift + 🡇 |
 /// | SelectWordLeft        |             | ctrl + shift + 🡄         | alt + shift + 🡄 |
@@ -160,8 +164,9 @@ pub fn default_bindings() -> gpui::ActionBindingCollection {
             .with::<NavLineEnd>("cmd-right")
             .with::<NavDocumentStart>("cmd-up")
             .with::<NavDocumentEnd>("cmd-down")
-            .with::<NavLineStart>("cmd-shift-left")
-            .with::<NavLineEnd>("cmd-shift-right")
+            // As AppKit's text fields do (moveToLeftEndOfLineAndModifySelection:)
+            .with::<SelectLineStart>("cmd-shift-left")
+            .with::<SelectLineEnd>("cmd-shift-right")
             .with::<SelectDocumentStart>("cmd-shift-up")
             .with::<SelectDocumentEnd>("cmd-shift-down")
             .with::<NavWordLeft>("alt-left")
@@ -247,6 +252,8 @@ pub trait EditableTextActionHandler<Context>: Sized {
     /// Extend selection down one visual line.
     fn select_down(&mut self, _: &SelectDown, _w: &mut Window, _cx: &mut Context) {}
     /// Extend selection to the beginning of the document.
+    fn select_line_start(&mut self, _: &SelectLineStart, _w: &mut Window, _cx: &mut Context) {}
+    fn select_line_end(&mut self, _: &SelectLineEnd, _w: &mut Window, _cx: &mut Context) {}
     fn select_start(&mut self, _: &SelectDocumentStart, _w: &mut Window, _cx: &mut Context) {}
     /// Extend selection to the end of the document.
     fn select_end(&mut self, _: &SelectDocumentEnd, _w: &mut Window, _cx: &mut Context) {}
@@ -348,6 +355,8 @@ pub(super) trait EditableTextActionElement<State> {
         register_action!(self, select_right);
         register_action!(self, select_up);
         register_action!(self, select_down);
+        register_action!(self, select_line_start);
+        register_action!(self, select_line_end);
         register_action!(self, select_start);
         register_action!(self, select_end);
         register_action!(self, select_left_word);

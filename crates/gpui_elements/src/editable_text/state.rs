@@ -1278,6 +1278,24 @@ impl<'app> EditableTextActionHandler<Context<'app, Self>> for EditableTextState 
         self.select_semantic(movement, cx);
     }
 
+    fn select_line_start(
+        &mut self,
+        _: &SelectLineStart,
+        _w: &mut Window,
+        cx: &mut Context<'app, Self>,
+    ) {
+        self.select_semantic(Direction::Start.with_boundary(TextBoundary::HardLine), cx);
+    }
+
+    fn select_line_end(
+        &mut self,
+        _: &SelectLineEnd,
+        _w: &mut Window,
+        cx: &mut Context<'app, Self>,
+    ) {
+        self.select_semantic(Direction::End.with_boundary(TextBoundary::HardLine), cx);
+    }
+
     fn select_start(
         &mut self,
         _: &SelectDocumentStart,
@@ -1782,6 +1800,17 @@ mod tests {
         update_movement_input(view, cx, |input, window, cx| {
             input.nav_line_end(&NavLineEnd, window, cx);
             assert_eq!(input.caret_selection(), 12.into());
+        });
+    }
+
+    #[gpui::test]
+    fn select_line_start_and_end_keep_the_anchor(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "first\nsecond", 9);
+        update_movement_input(view, cx, |input, window, cx| {
+            input.select_line_start(&SelectLineStart, window, cx);
+            assert_eq!(input.selected_byte_range(), 6..9);
+            input.select_line_end(&SelectLineEnd, window, cx);
+            assert_eq!(input.selected_byte_range(), 9..12);
         });
     }
 
