@@ -426,11 +426,22 @@ impl Element for EditableTextElement {
                     bounds.size.height -= padding.top + padding.bottom;
                     bounds
                 };
-                request_layout.state.update(cx, |state, _cx| {
+                let scroll_offset = request_layout.state.update(cx, |state, _cx| {
                     // while gpui tracks scroll_offset with negative values,
                     // this is converted into positive for usage with bounds
                     state.layout_data.scroll_bounds =
                         Bounds::new(-scroll_offset, inner_bounds.size);
+                    // The layout is current now: a caret that moved before
+                    // it scrolls into view in this frame, and the offset is
+                    // kept from the next layout on
+                    if std::mem::take(&mut state.caret_scroll_pending) {
+                        state.scroll_to_caret();
+                        if let Some(next) = state.layout_data.next_scroll_offset {
+                            state.layout_data.scroll_bounds.origin = next;
+                            return -next;
+                        }
+                    }
+                    scroll_offset
                 });
                 let document_offset = request_layout.state.read(cx).layout_data.document_offset;
                 InteractivityPrepaint {
@@ -504,7 +515,12 @@ impl Element for EditableTextElement {
                 Self::process_frame_events(prepaint, bounds, &request_layout.state, window, cx);
             }
 
-            // Actually draw the elements we constructed during prepaint
+            // Actually draw the elements we constructed during prepaint. The
+            // selection goes behind the text, so an opaque one doesn't hide it.
+            for quad in prepaint.elements.selection.drain(..) {
+                window.paint_quad(quad);
+            }
+
             if let Some(document) = prepaint.elements.document.take() {
                 let _ = document.paint(
                     prepaint.interactivity.document_origin(),
@@ -517,10 +533,6 @@ impl Element for EditableTextElement {
             }
 
             for quad in prepaint.elements.ime_marked.drain(..) {
-                window.paint_quad(quad);
-            }
-
-            for quad in prepaint.elements.selection.drain(..) {
                 window.paint_quad(quad);
             }
 
@@ -841,7 +853,8 @@ impl PrepaintElements {
                 .extend(quads(range, colors.ime_underline, line_height - px(2.)));
         }
 
-        if prepaint.caret_visible {
+        // A selected range shows no caret, as AppKit's fields draw it
+        if prepaint.caret_visible && state.selected_byte_range().is_empty() {
             let caret_point = document_origin
                 + document
                     .visual_position_for_caret(state.visible_caret(), line_height)
@@ -1178,13 +1191,16 @@ mod tests {
             let caret_visual_position = document
                 .visual_position_for_caret(caret, line_height)
                 .unwrap();
-            self.assert_quads(
-                CARET_COLOR,
+            // A selected range shows no caret
+            let carets = if range.is_empty() {
                 vec![Bounds::new(
                     origin + caret_visual_position,
                     size(px(2.), line_height),
-                )],
-            );
+                )]
+            } else {
+                Vec::new()
+            };
+            self.assert_quads(CARET_COLOR, carets);
 
             let expected = document
                 .selection_bounds(range, line_height)
@@ -1481,6 +1497,29 @@ mod tests {
         assert_eq!(
             fixture.document().visual_lines()[0].direction,
             gpui::ResolvedDirection::LeftToRight
+        );
+    }
+
+    #[test]
+    fn a_caret_moved_before_the_layout_scrolls_into_view_once_laid_out() {
+        let mut fixture = BidiInputFixture::new("abc", 8.0, 120.0, false, 1.0);
+        let text = "English text that is much wider than the input";
+        let input = fixture.input.clone();
+        fixture.cx.update(|cx| {
+            input.update(cx, |state, cx| {
+                state.emplace(text, cx);
+                state.move_to(text.len(), cx);
+            })
+        });
+        fixture.cx.run_until_parked();
+
+        let (scroll, content) = fixture.cx.update(|cx| {
+            let layout = &input.read(cx).layout_data;
+            (layout.scroll_bounds, layout.state.size.unwrap())
+        });
+        assert!(
+            scroll.origin.x > Pixels::ZERO && scroll.right() >= content.width - px(1.),
+            "the end isn't in view: scroll={scroll:?}, content={content:?}"
         );
     }
 

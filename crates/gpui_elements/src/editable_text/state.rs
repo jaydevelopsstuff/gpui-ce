@@ -69,6 +69,11 @@ pub struct EditableTextState {
     /// Count of consecutive nearby clicks, used to choose single, double, or triple-click behavior.
     click_count: usize,
 
+    /// The caret moved while the layout was out of date (before the first
+    /// one, or after an edit not yet laid out): it's scrolled into view once
+    /// the next layout is current, in prepaint.
+    pub(super) caret_scroll_pending: bool,
+
     focus_handle: FocusHandle,
     blur_subscription: Option<Subscription>,
     history: Option<EditableTextHistory>,
@@ -160,6 +165,8 @@ impl EditableTextState {
             selection_drag_visual_caret: None,
             last_click_position: None,
             click_count: 0,
+
+            caret_scroll_pending: false,
 
             focus_handle: cx.focus_handle(),
             blur_subscription: None,
@@ -546,8 +553,11 @@ impl EditableTextState {
 
 // Internal user action / logical processors
 impl EditableTextState {
-    fn scroll_to_caret(&mut self) {
-        if self.layout_data.scroll_bounds.is_empty() {
+    pub(super) fn scroll_to_caret(&mut self) {
+        // Measured against an old layout, the caret would land in the wrong
+        // place; prepaint scrolls once the new layout is in
+        if self.layout_data.scroll_bounds.is_empty() || self.current_document().is_err() {
+            self.caret_scroll_pending = true;
             return;
         }
         let Some(content_size) = self.layout_data.state.size else {
