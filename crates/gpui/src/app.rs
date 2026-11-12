@@ -838,6 +838,7 @@ pub struct App {
     text_system: Arc<TextSystem>,
 
     pub(crate) actions: Rc<ActionRegistry>,
+    pub(crate) app_menu_validator: Option<Rc<dyn Fn(&dyn Action, &mut App) -> bool>>,
     pub(crate) active_drag: Option<AnyDrag>,
     platform_owned_drag: Option<PlatformOwnedDrag>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -967,6 +968,7 @@ impl App {
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
+                app_menu_validator: None,
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
@@ -2969,6 +2971,16 @@ impl App {
             || self
                 .global_action_listeners
                 .contains_key(&action.as_any().type_id())
+    }
+
+    /// Decides whether each menu bar item is enabled, in place of
+    /// [`App::is_action_available`]. The platform asks when a menu opens and
+    /// when a key equivalent is pressed, so the answer never goes stale.
+    pub fn on_validate_app_menu_action(
+        &mut self,
+        validate: impl Fn(&dyn Action, &mut App) -> bool + 'static,
+    ) {
+        self.app_menu_validator = Some(Rc::new(validate));
     }
 
     /// Replaces the app's menu bar with `menus`.

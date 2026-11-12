@@ -29,7 +29,7 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAppearance, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSControlStateValueOn, NSCursor, NSDocumentController, NSEventModifierFlags, NSMenu,
+    NSControlStateValueOn, NSCursor, NSDocumentController, NSEventModifierFlags, NSImage, NSMenu,
     NSMenuDelegate, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSResponder, NSSavePanel,
     NSScroller, NSWorkspace,
 };
@@ -300,6 +300,12 @@ impl MacPlatform {
                     unsafe { msg_send![GPUIApplication::class(), sharedApplication] };
                 app.as_super().setWindowsMenu(Some(&menu));
             }
+            // AppKit adds its menu-command search field to the Help menu
+            if menu_config.name == "Help" {
+                let app: Retained<GPUIApplication> =
+                    unsafe { msg_send![GPUIApplication::class(), sharedApplication] };
+                app.as_super().setHelpMenu(Some(&menu));
+            }
         }
         application_menu
     }
@@ -343,11 +349,13 @@ impl MacPlatform {
                 os_action,
                 checked,
                 disabled,
+                key_equivalent,
+                icon,
             } => {
                 // Note that this is intentionally using earlier bindings, whereas typically
                 // later ones take display precedence. See the discussion on
                 // https://github.com/zed-industries/zed/issues/23621
-                let keystrokes = keymap
+                let bound = keymap
                     .bindings_for_action(action.as_ref())
                     .find_or_first(|binding| {
                         binding.predicate().is_none_or(|predicate| {
@@ -365,7 +373,18 @@ impl MacPlatform {
                             }))
                         })
                     })
-                    .map(|binding| binding.keystrokes());
+                    .map(|binding| {
+                        binding
+                            .keystrokes()
+                            .iter()
+                            .map(|keystroke| (*keystroke.modifiers(), keystroke.key().to_owned()))
+                            .collect::<Vec<_>>()
+                    });
+                // The item's own shortcut comes first
+                let keystrokes = match key_equivalent {
+                    Some(keystroke) => Some(vec![(keystroke.modifiers, keystroke.key.clone())]),
+                    None => bound,
+                };
 
                 let selector = match os_action {
                     Some(gpui::OsAction::Cut) => Some(objc2::sel!(cut:)),
@@ -376,22 +395,31 @@ impl MacPlatform {
                     // we don't have a NSTextView/NSTextField to enable them on.
                     Some(gpui::OsAction::Undo) => Some(objc2::sel!(handleGPUIMenuItem:)),
                     Some(gpui::OsAction::Redo) => Some(objc2::sel!(handleGPUIMenuItem:)),
+                    // AppKit's own items: the app or the key window handles
+                    // and validates them, as in any Cocoa app
+                    Some(gpui::OsAction::About) => {
+                        Some(objc2::sel!(orderFrontStandardAboutPanel:))
+                    }
+                    Some(gpui::OsAction::Hide) => Some(objc2::sel!(hide:)),
+                    Some(gpui::OsAction::HideOthers) => Some(objc2::sel!(hideOtherApplications:)),
+                    Some(gpui::OsAction::ShowAll) => Some(objc2::sel!(unhideAllApplications:)),
+                    Some(gpui::OsAction::Minimize) => Some(objc2::sel!(performMiniaturize:)),
+                    Some(gpui::OsAction::Zoom) => Some(objc2::sel!(performZoom:)),
+                    Some(gpui::OsAction::ToggleFullScreen) => Some(objc2::sel!(toggleFullScreen:)),
+                    Some(gpui::OsAction::BringAllToFront) => Some(objc2::sel!(arrangeInFront:)),
                     None => Some(objc2::sel!(handleGPUIMenuItem:)),
                 };
 
                 let item;
                 if let Some(keystrokes) = keystrokes {
                     if keystrokes.len() == 1 {
-                        let keystroke = &keystrokes[0];
+                        let (modifiers, key) = &keystrokes[0];
                         let mut mask = NSEventModifierFlags::empty();
                         for (modifier, flag) in &[
-                            (
-                                keystroke.modifiers().platform,
-                                NSEventModifierFlags::Command,
-                            ),
-                            (keystroke.modifiers().control, NSEventModifierFlags::Control),
-                            (keystroke.modifiers().alt, NSEventModifierFlags::Option),
-                            (keystroke.modifiers().shift, NSEventModifierFlags::Shift),
+                            (modifiers.platform, NSEventModifierFlags::Command),
+                            (modifiers.control, NSEventModifierFlags::Control),
+                            (modifiers.alt, NSEventModifierFlags::Option),
+                            (modifiers.shift, NSEventModifierFlags::Shift),
                         ] {
                             if *modifier {
                                 mask |= *flag;
@@ -403,7 +431,7 @@ impl MacPlatform {
                                 NSMenuItem::alloc(marker),
                                 &ns_string(name),
                                 selector,
-                                &ns_string(key_to_native(keystroke.key()).as_ref()),
+                                &ns_string(key_to_native(key).as_ref()),
                             )
                         };
                         if Self::os_version() >= Version::new(12, 0, 0) {
@@ -437,6 +465,11 @@ impl MacPlatform {
                     item.setState(NSControlStateValueOn);
                 }
                 item.setEnabled(!*disabled);
+                if let Some(icon) = icon
+                    && let Some(image) = NSImage::imageNamed(&ns_string(icon))
+                {
+                    item.setImage(Some(&image));
+                }
 
                 let tag = actions.len() as NSInteger;
                 item.setTag(tag);

@@ -1,4 +1,4 @@
-use crate::{Action, App, Platform, SharedString};
+use crate::{Action, App, Keystroke, Platform, SharedString};
 
 /// A menu of the application, either a main menu or a submenu
 pub struct Menu {
@@ -100,6 +100,14 @@ pub enum MenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// The item's own shortcut, shown on it and handled by the menu. Without
+        /// one, the item shows the keymap's binding for its action, if any
+        key_equivalent: Option<Keystroke>,
+
+        /// The name of a system image shown beside the item (on macOS, an
+        /// `NSImage` name such as `NSGoLeftTemplate`)
+        icon: Option<SharedString>,
     },
 }
 
@@ -130,6 +138,8 @@ impl MenuItem {
             os_action: None,
             checked: false,
             disabled: false,
+            key_equivalent: None,
+            icon: None,
         }
     }
 
@@ -145,6 +155,8 @@ impl MenuItem {
             os_action: Some(os_action),
             checked: false,
             disabled: false,
+            key_equivalent: None,
+            icon: None,
         }
     }
 
@@ -159,12 +171,16 @@ impl MenuItem {
                 os_action,
                 checked,
                 disabled,
+                key_equivalent,
+                icon,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
                 checked,
                 disabled,
+                key_equivalent,
+                icon,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -179,6 +195,27 @@ impl MenuItem {
                 *old = checked;
             }
             _ => {}
+        }
+        self
+    }
+
+    /// Set this menu item's own shortcut, in place of the keymap's binding
+    /// for its action
+    ///
+    /// Only for [`MenuItem::Action`], otherwise, will be ignored
+    pub fn key_equivalent(mut self, keystroke: Keystroke) -> Self {
+        if let MenuItem::Action { key_equivalent, .. } = &mut self {
+            *key_equivalent = Some(keystroke);
+        }
+        self
+    }
+
+    /// Set the system image shown beside this menu item
+    ///
+    /// Only for [`MenuItem::Action`], otherwise, will be ignored
+    pub fn icon(mut self, name: impl Into<SharedString>) -> Self {
+        if let MenuItem::Action { icon, .. } = &mut self {
+            *icon = Some(name.into());
         }
         self
     }
@@ -274,6 +311,12 @@ pub enum OwnedMenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// The item's own shortcut, if it has one
+        key_equivalent: Option<Keystroke>,
+
+        /// The name of the system image shown beside the item, if any
+        icon: Option<SharedString>,
     },
 }
 
@@ -288,12 +331,16 @@ impl Clone for OwnedMenuItem {
                 os_action,
                 checked,
                 disabled,
+                key_equivalent,
+                icon,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
                 checked: *checked,
                 disabled: *disabled,
+                key_equivalent: key_equivalent.clone(),
+                icon: icon.clone(),
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }
@@ -326,6 +373,30 @@ pub enum OsAction {
 
     /// The 'redo' action
     Redo,
+
+    /// The standard About panel (on macOS, `orderFrontStandardAboutPanel:`)
+    About,
+
+    /// Hide the app
+    Hide,
+
+    /// Hide the other apps
+    HideOthers,
+
+    /// Show the apps hidden by [`OsAction::HideOthers`]
+    ShowAll,
+
+    /// Minimize the key window
+    Minimize,
+
+    /// Zoom the key window
+    Zoom,
+
+    /// Enter or exit full screen; the system keeps the item's title in step
+    ToggleFullScreen,
+
+    /// Bring all of the app's windows to the front
+    BringAllToFront,
 }
 
 pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
@@ -343,7 +414,13 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
         move |action| {
             cx.app
                 .upgrade()
-                .map(|app| app.borrow_mut().update(|cx| cx.is_action_available(action)))
+                .map(|app| {
+                    app.borrow_mut()
+                        .update(|cx| match cx.app_menu_validator.clone() {
+                            Some(validate) => validate(action, cx),
+                            None => cx.is_action_available(action),
+                        })
+                })
                 .unwrap_or(false)
         }
     }));

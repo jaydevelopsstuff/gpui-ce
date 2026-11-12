@@ -199,6 +199,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSGraphics",
   "NSHapticFeedback",
   "NSCursor",
+  "NSImage",
   "NSPanel",
   "NSMenu",
   "NSMenuItem",
