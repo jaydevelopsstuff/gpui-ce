@@ -1524,6 +1524,50 @@ mod tests {
     }
 
     #[test]
+    fn typing_past_the_edge_keeps_the_caret_in_view() {
+        let mut fixture = BidiInputFixture::new("abc", 8.0, 120.0, false, 1.0);
+        let input = fixture.input.clone();
+        let window = fixture.window;
+        // Several insertions between frames, as fast typing or an input
+        // method's commit makes them
+        fixture
+            .cx
+            .update_window(window.into(), |_, window, cx| {
+                input.update(cx, |state, cx| {
+                    for word in [
+                        " English",
+                        " text",
+                        " much",
+                        " wider",
+                        " than",
+                        " the input",
+                    ] {
+                        state.replace_text_in_range(None, word, window, cx);
+                    }
+                })
+            })
+            .unwrap();
+        fixture.cx.run_until_parked();
+
+        let (scroll, caret) = fixture.cx.update(|cx| {
+            let state = input.read(cx);
+            let layout = &state.layout_data;
+            let caret = layout
+                .document
+                .as_ref()
+                .and_then(|document| {
+                    document.visual_position_for_caret(state.visible_caret(), layout.line_height)
+                })
+                .unwrap();
+            (layout.scroll_bounds, caret + layout.document_offset)
+        });
+        assert!(
+            scroll.origin.x > Pixels::ZERO && scroll.left() <= caret.x && caret.x <= scroll.right(),
+            "the caret isn't in view: scroll={scroll:?}, caret={caret:?}"
+        );
+    }
+
+    #[test]
     fn rtl_editable_overflow_starts_at_the_right_and_remains_reachable() {
         let mut fixture = BidiInputFixture::new_with_direction(
             "English text that is much wider than the input",

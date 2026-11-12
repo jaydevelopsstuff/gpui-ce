@@ -362,6 +362,8 @@ impl EditableTextState {
 
         self.set_selection(CaretPosition::from((end_pos, affinity)));
         self.marked_range = None;
+        // Typing past the edge keeps the caret in view (once laid out)
+        self.scroll_to_caret();
     }
 
     fn emit_text_changed(&self, cx: &mut Context<Self>) {
