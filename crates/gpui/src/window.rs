@@ -4002,6 +4002,38 @@ impl Window {
         }
     }
 
+    /// Paints `f` scaled by `scale` about the window's origin: it's rendered at `scale`
+    /// times the display's scale factor, so text, SVGs and images are rasterized at
+    /// the scaled size and stay sharp. The clip stays where it was on screen;
+    /// hitboxes aren't scaled. [`Scaled`](crate::Scaled) scales an element about a
+    /// point of its own. This method should only be called during paint.
+    pub fn with_paint_scale<R>(&mut self, scale: f32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.invalidator.debug_assert_paint();
+        if scale <= 0.0 || scale == 1.0 {
+            return f(self);
+        }
+        let mask = self.content_mask();
+        let unscale = |v: Pixels| px(f32::from(v) / scale);
+        self.content_mask_stack.push(ContentMask {
+            bounds: Bounds {
+                origin: point(unscale(mask.bounds.origin.x), unscale(mask.bounds.origin.y)),
+                size: size(unscale(mask.bounds.size.width), unscale(mask.bounds.size.height)),
+            },
+            fade_out: Edges {
+                top: unscale(mask.fade_out.top),
+                right: unscale(mask.fade_out.right),
+                bottom: unscale(mask.fade_out.bottom),
+                left: unscale(mask.fade_out.left),
+            },
+        });
+        let scale_factor = self.scale_factor;
+        self.scale_factor = scale_factor * scale;
+        let result = f(self);
+        self.scale_factor = scale_factor;
+        self.content_mask_stack.pop();
+        result
+    }
+
     /// Updates the global element offset relative to the current offset. This is used to implement
     /// scrolling. This method should only be called during the prepaint phase of element drawing.
     pub fn with_element_offset<R>(
