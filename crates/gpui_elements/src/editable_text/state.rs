@@ -189,7 +189,7 @@ impl EditableTextState {
     }
 
     /// Returns the current selection as a canonical logical-order UTF-8 byte range.
-    pub(super) fn selected_byte_range(&self) -> Range<usize> {
+    pub fn selected_byte_range(&self) -> Range<usize> {
         self.selection_movement.result.byte_range()
     }
 
@@ -1080,11 +1080,16 @@ impl EntityInputHandler for EditableTextState {
         let range = self.storage.utf_range_16to8(&range_utf16);
         let line_height = window.line_height();
 
-        let document = self.current_document().ok()?;
+        // An input method asks as soon as it marks text, before the next
+        // frame lays the new text out: answer from the last layout, where the
+        // range starts at about the same place, rather than with no bounds
+        // (which puts the candidate window in a corner of the screen)
+        let document = self.layout_data.document.as_deref()?;
         let document_origin = bounds.origin + self.layout_data.document_offset
             - self.layout_data.scroll_bounds.origin;
-        let start = range.start.min(document.text.len());
-        let end = range.end.min(document.text.len());
+        let boundary = |index: usize| document.text.floor_char_boundary(index);
+        let start = boundary(range.start);
+        let end = boundary(range.end);
 
         if start == end {
             let caret = CaretPosition::attached_to_next_cluster(start);
@@ -3082,6 +3087,29 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[gpui::test]
+    fn bounds_for_range_answers_from_the_last_layout_before_the_next(cx: &mut TestAppContext) {
+        let document = movement_document("abc", None);
+        let view = create_test_input(cx, "abc", 3);
+        update_movement_input(view, cx, |input, window, cx| {
+            input.layout_data.document = Some(document.clone());
+            input.layout_data.line_height = px(24.);
+            input.layout_data.state.last_seen_storage_version = input.version();
+            let element = Bounds::new(point(px(10.), px(20.)), gpui::size(px(200.), px(24.)));
+            let laid_out = input
+                .bounds_for_range(3..3, element, window, cx)
+                .expect("the caret after the text");
+
+            // Composing starts before the next frame lays "abcな" out
+            input.replace_and_mark_text_in_range(None, "な", Some(1..1), window, cx);
+            assert!(input.current_document().is_err());
+            let marked = input
+                .bounds_for_range(3..4, element, window, cx)
+                .expect("answered from the last layout");
+            assert_eq!(marked.origin, laid_out.origin);
+        });
     }
 
     #[gpui::test]
