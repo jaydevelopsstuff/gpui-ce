@@ -253,12 +253,13 @@ pub struct MetalRenderer {
     surfaces_pipeline_state: metal::RenderPipelineState,
     // Blur pipelines: downsample (no blend, also used for the final blit), separable gaussian
     // (no blend), and composite (alpha blend into a rounded rect), from shared shader sources.
-    // A backdrop's composite adds its blurred sample (additive blend) where its coverage
-    // pass erased the target.
+    // A backdrop's composite erases the target by its coverage, then adds its blurred sample.
     blur_downsample_pipeline_state: metal::RenderPipelineState,
     blur_pipeline_state: metal::RenderPipelineState,
     blur_composite_pipeline_state: metal::RenderPipelineState,
     smoothed_blur_composite_pipeline_state: metal::RenderPipelineState,
+    erase_blur_composite_pipeline_state: metal::RenderPipelineState,
+    erase_smoothed_blur_composite_pipeline_state: metal::RenderPipelineState,
     additive_blur_composite_pipeline_state: metal::RenderPipelineState,
     additive_smoothed_blur_composite_pipeline_state: metal::RenderPipelineState,
     sampler: metal::SamplerState,
@@ -482,17 +483,41 @@ impl MetalRenderer {
             smoothed_blur_composite_shader,
             MTLPixelFormat::BGRA8Unorm,
         );
-        let additive_blur_composite_pipeline_state = build_additive_pipeline_state(
-            &device,
+        // Erase (Zero / OneMinusSourceAlpha) and additive (One / One) blends for a backdrop's
+        // two composite passes.
+        let backdrop_pass = |library, shader, source, destination| {
+            build_blur_composite_pass_pipeline_state(
+                &device,
+                library,
+                shader,
+                MTLPixelFormat::BGRA8Unorm,
+                source,
+                destination,
+            )
+        };
+        let erase_blur_composite_pipeline_state = backdrop_pass(
             &blur_composite_library,
             blur_composite_shader,
-            MTLPixelFormat::BGRA8Unorm,
+            metal::MTLBlendFactor::Zero,
+            metal::MTLBlendFactor::OneMinusSourceAlpha,
         );
-        let additive_smoothed_blur_composite_pipeline_state = build_additive_pipeline_state(
-            &device,
+        let erase_smoothed_blur_composite_pipeline_state = backdrop_pass(
             &smoothed_blur_composite_library,
             smoothed_blur_composite_shader,
-            MTLPixelFormat::BGRA8Unorm,
+            metal::MTLBlendFactor::Zero,
+            metal::MTLBlendFactor::OneMinusSourceAlpha,
+        );
+        let additive_blur_composite_pipeline_state = backdrop_pass(
+            &blur_composite_library,
+            blur_composite_shader,
+            metal::MTLBlendFactor::One,
+            metal::MTLBlendFactor::One,
+        );
+        let additive_smoothed_blur_composite_pipeline_state = backdrop_pass(
+            &smoothed_blur_composite_library,
+            smoothed_blur_composite_shader,
+            metal::MTLBlendFactor::One,
+            metal::MTLBlendFactor::One,
         );
 
         let sampler_descriptor = SamplerDescriptor::new();
@@ -528,6 +553,8 @@ impl MetalRenderer {
             blur_pipeline_state,
             blur_composite_pipeline_state,
             smoothed_blur_composite_pipeline_state,
+            erase_blur_composite_pipeline_state,
+            erase_smoothed_blur_composite_pipeline_state,
             additive_blur_composite_pipeline_state,
             additive_smoothed_blur_composite_pipeline_state,
             sampler,
@@ -1399,14 +1426,16 @@ impl MetalRenderer {
                 color_attachment.set_load_action(metal::MTLLoadAction::Load);
             },
         );
-        let (blend, additive) = if composite_uniforms.corner_smoothing > 0.0 {
+        let (blend, erase, additive) = if composite_uniforms.corner_smoothing > 0.0 {
             (
                 &self.smoothed_blur_composite_pipeline_state,
+                &self.erase_smoothed_blur_composite_pipeline_state,
                 &self.additive_smoothed_blur_composite_pipeline_state,
             )
         } else {
             (
                 &self.blur_composite_pipeline_state,
+                &self.erase_blur_composite_pipeline_state,
                 &self.additive_blur_composite_pipeline_state,
             )
         };
@@ -1431,7 +1460,7 @@ impl MetalRenderer {
             // A backdrop replaces what was behind it, as CSS `backdrop-filter` does: blended
             // over a translucent target, the content it blurred would still show through it.
             // Its coverage erases the target, then its blurred sample is added in.
-            draw(blend, &composite_uniforms.coverage());
+            draw(erase, &composite_uniforms.coverage());
             draw(additive, &composite_uniforms);
         } else {
             draw(blend, &composite_uniforms);
@@ -2077,13 +2106,15 @@ fn build_path_sprite_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
-/// Adds the fragment's output to the target (One / One), for a backdrop's blurred sample once
-/// its coverage has erased what was behind it.
-fn build_additive_pipeline_state(
+/// One of a backdrop's composite passes, which blend the same factors into color and alpha:
+/// erasing the target by its coverage, then adding its blurred sample.
+fn build_blur_composite_pass_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
     shader: &NativeShader,
     pixel_format: metal::MTLPixelFormat,
+    source: metal::MTLBlendFactor,
+    destination: metal::MTLBlendFactor,
 ) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(shader.vertex_entry, None)
@@ -2101,10 +2132,10 @@ fn build_additive_pipeline_state(
     color_attachment.set_blending_enabled(true);
     color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_source_rgb_blend_factor(source);
+    color_attachment.set_source_alpha_blend_factor(source);
+    color_attachment.set_destination_rgb_blend_factor(destination);
+    color_attachment.set_destination_alpha_blend_factor(destination);
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -2950,6 +2981,72 @@ mod tests {
             difference(left, right) < 16,
             "neighboring squares blur together: {left:?} {right:?}",
         );
+    }
+
+    #[test]
+    fn backdrop_blur_keeps_uniform_translucent_content() {
+        let mut renderer = MetalHeadlessRenderer::new();
+        renderer.renderer.update_transparency(true);
+        let full = Bounds {
+            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size: Size {
+                width: ScaledPixels(64.0),
+                height: ScaledPixels(32.0),
+            },
+        };
+        let mut filter = Scene::default();
+        filter.insert_primitive(Quad {
+            bounds: full,
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            background: solid_background(hsla(0.6, 0.1, 0.12, 0.58)),
+            ..Default::default()
+        });
+        filter.insert_primitive(BackdropFilter {
+            bounds: Bounds {
+                origin: gpui::point(ScaledPixels(16.0), ScaledPixels(4.0)),
+                size: Size {
+                    width: ScaledPixels(32.0),
+                    height: ScaledPixels(24.0),
+                },
+            },
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            corner_radii: Corners::all(ScaledPixels(4.0)),
+            filters: smallvec::smallvec![ScaledFilter::Blur(ScaledPixels(8.0))],
+            opacity: 1.0,
+            ..Default::default()
+        });
+        filter.finish();
+        let Some(image) = render_for_contracts(
+            &mut renderer,
+            &filter,
+            Size {
+                width: DevicePixels(64),
+                height: DevicePixels(32),
+            },
+        ) else {
+            return;
+        };
+        // Blurring an even, translucent backdrop changes nothing, its alpha included
+        let outside = pixel(&image, 4, 16);
+        for (x, y) in [(32, 16), (17, 5), (46, 26)] {
+            let inside = pixel(&image, x, y);
+            let drift = inside
+                .iter()
+                .zip(outside.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                drift <= 2,
+                "({x}, {y}) under the blur matches outside it: {inside:?} vs {outside:?}",
+            );
+        }
     }
 
     #[test]

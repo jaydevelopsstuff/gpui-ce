@@ -164,14 +164,16 @@ impl WgpuRenderer {
             [self.target.width() as f32, self.target.height() as f32],
         );
         let pipelines = &self.resources().pipelines;
-        let (blend, additive) = if uniforms.corner_smoothing > 0.0 {
+        let (blend, erase, additive) = if uniforms.corner_smoothing > 0.0 {
             (
                 &pipelines.smoothed_blur_composite,
+                &pipelines.erase_smoothed_blur_composite,
                 &pipelines.additive_smoothed_blur_composite,
             )
         } else {
             (
                 &pipelines.blur_composite,
+                &pipelines.erase_blur_composite,
                 &pipelines.additive_blur_composite,
             )
         };
@@ -183,7 +185,7 @@ impl WgpuRenderer {
             self.draw_filter_pass(
                 encoder,
                 "blur_composite_coverage",
-                blend,
+                erase,
                 target,
                 source,
                 uniforms.coverage(),

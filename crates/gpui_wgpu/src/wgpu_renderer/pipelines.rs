@@ -75,6 +75,8 @@ pub(super) struct WgpuPipelines {
     pub(super) blur: WgpuRenderPipeline,
     pub(super) blur_composite: WgpuRenderPipeline,
     pub(super) smoothed_blur_composite: WgpuRenderPipeline,
+    pub(super) erase_blur_composite: WgpuRenderPipeline,
+    pub(super) erase_smoothed_blur_composite: WgpuRenderPipeline,
     pub(super) additive_blur_composite: WgpuRenderPipeline,
     pub(super) additive_smoothed_blur_composite: WgpuRenderPipeline,
 }
@@ -401,6 +403,7 @@ impl WgpuPipelines {
         let overwrite_target = color_target(surface_format, None);
         let composite_target =
             color_target(surface_format, Some(premultiplied_composite_blend_state()));
+        let erase_target = color_target(surface_format, Some(erase_blend_state()));
         let additive_target = color_target(surface_format, Some(additive_blend_state()));
 
         let layout_for = |data_layout| match data_layout {
@@ -480,6 +483,13 @@ impl WgpuPipelines {
             smoothed_blur_composite: create(
                 shader::SMOOTHED_BLUR_COMPOSITE,
                 &composite_target,
+                1,
+                &shader_module,
+            ),
+            erase_blur_composite: create(shader::BLUR_COMPOSITE, &erase_target, 1, &shader_module),
+            erase_smoothed_blur_composite: create(
+                shader::SMOOTHED_BLUR_COMPOSITE,
+                &erase_target,
                 1,
                 &shader_module,
             ),
@@ -653,6 +663,20 @@ fn scene_blend_state(alpha_mode: wgpu::CompositeAlphaMode) -> wgpu::BlendState {
 
 fn premultiplied_composite_blend_state() -> wgpu::BlendState {
     source_over_blend_state(wgpu::BlendFactor::One)
+}
+
+/// Erases the target by the fragment's alpha, a backdrop's coverage, before its blurred sample
+/// is added.
+fn erase_blend_state() -> wgpu::BlendState {
+    let erase = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    };
+    wgpu::BlendState {
+        color: erase,
+        alpha: erase,
+    }
 }
 
 /// Adds the fragment's output to the target, for a backdrop's blurred sample once its coverage

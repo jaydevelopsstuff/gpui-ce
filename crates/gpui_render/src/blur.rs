@@ -125,8 +125,8 @@ impl BlurUniforms {
     }
 
     /// The same composite writing only its coverage, `(0, 0, 0, coverage × opacity)`. Drawn
-    /// with premultiplied blending, it erases the target by that much, so a backdrop's blurred
-    /// sample can then be added in place of what was behind it.
+    /// with an erasing blend (Zero / OneMinusSrcAlpha), it erases the target by that much, so a
+    /// backdrop's blurred sample can then be added in place of what was behind it.
     pub fn coverage(self) -> Self {
         Self {
             composite_output: BlurCompositeOutput::Coverage,
