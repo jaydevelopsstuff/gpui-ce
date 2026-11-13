@@ -302,6 +302,8 @@ impl FrameRequirements {
             uniforms: FrameUniformRequirements {
                 filter_count: FILTER_UNIFORMS_PER_COMPOSITE
                     * (planned.backdrop_filter_count + planned.isolated_filter_count) as u64
+                    // A backdrop composites in two passes: its coverage, then its blur
+                    + planned.backdrop_filter_count as u64
                     + u64::from(planned.uses_offscreen_target)
                     + if planned.isolated_target_count > 0 {
                         (planned.backdrop_filter_count * (planned.isolated_target_count + 1)) as u64

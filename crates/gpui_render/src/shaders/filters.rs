@@ -106,7 +106,7 @@ pub mod blur {
         pub source_size: Vec2f,
         pub target_size: Vec2f,
         pub corner_smoothing: f32,
-        pub padding0: u32,
+        pub composite_output: BlurCompositeOutput,
         pub padding1: u32,
         pub padding2: u32,
     }
@@ -141,6 +141,9 @@ pub mod blur {
             0.0,
         );
         let factor = coverage * get!(BLUR_LOCALS).opacity;
+        if get!(BLUR_LOCALS).composite_output == BlurCompositeOutput::Coverage {
+            return vec4f(0.0, 0.0, 0.0, factor);
+        }
         vec4f(
             blurred.x * factor,
             blurred.y * factor,

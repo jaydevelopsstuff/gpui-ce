@@ -163,23 +163,55 @@ impl WgpuRenderer {
             source_size,
             [self.target.width() as f32, self.target.height() as f32],
         );
-        let resources = self.resources();
-        let pipeline = if uniforms.corner_smoothing > 0.0 {
-            &resources.pipelines.smoothed_blur_composite
+        let pipelines = &self.resources().pipelines;
+        let (blend, additive) = if uniforms.corner_smoothing > 0.0 {
+            (
+                &pipelines.smoothed_blur_composite,
+                &pipelines.additive_smoothed_blur_composite,
+            )
         } else {
-            &resources.pipelines.blur_composite
+            (
+                &pipelines.blur_composite,
+                &pipelines.additive_blur_composite,
+            )
         };
 
-        self.draw_filter_pass(
-            encoder,
-            "blur_composite",
-            pipeline,
-            target,
-            source,
-            uniforms,
-            wgpu::LoadOp::Load,
-            None,
-        );
+        if clips_to_bounds {
+            // A backdrop replaces what was behind it, as CSS `backdrop-filter` does: blended
+            // over a translucent target, the content it blurred would still show through it.
+            // Its coverage erases the target, then its blurred sample is added in.
+            self.draw_filter_pass(
+                encoder,
+                "blur_composite_coverage",
+                blend,
+                target,
+                source,
+                uniforms.coverage(),
+                wgpu::LoadOp::Load,
+                None,
+            );
+            self.draw_filter_pass(
+                encoder,
+                "blur_composite",
+                additive,
+                target,
+                source,
+                uniforms,
+                wgpu::LoadOp::Load,
+                None,
+            );
+        } else {
+            self.draw_filter_pass(
+                encoder,
+                "blur_composite",
+                blend,
+                target,
+                source,
+                uniforms,
+                wgpu::LoadOp::Load,
+                None,
+            );
+        }
     }
 
     pub(super) fn snapshot_backdrop<'a>(

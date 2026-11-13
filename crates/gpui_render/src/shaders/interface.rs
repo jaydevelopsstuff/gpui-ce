@@ -228,7 +228,7 @@ pub const RENDER_BUFFER_LAYOUTS: &[gpui::SceneBufferLayout] = &[
         source_size,
         target_size,
         corner_smoothing,
-        padding0,
+        composite_output,
         padding1,
         padding2
     ),

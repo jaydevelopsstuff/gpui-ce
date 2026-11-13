@@ -103,6 +103,15 @@ mod source {
         RoundedBounds = 1,
     }
 
+    /// What a blur composite writes: the blurred sample, or only its coverage, which a
+    /// backdrop's composite first erases the content behind it by.
+    #[repr(u32)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Wgsl)]
+    pub enum BlurCompositeOutput {
+        Blurred = 0,
+        Coverage = 1,
+    }
+
     #[repr(u32)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Wgsl)]
     pub enum DownsampleMode {

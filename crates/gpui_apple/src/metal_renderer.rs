@@ -253,10 +253,14 @@ pub struct MetalRenderer {
     surfaces_pipeline_state: metal::RenderPipelineState,
     // Blur pipelines: downsample (no blend, also used for the final blit), separable gaussian
     // (no blend), and composite (alpha blend into a rounded rect), from shared shader sources.
+    // A backdrop's composite adds its blurred sample (additive blend) where its coverage
+    // pass erased the target.
     blur_downsample_pipeline_state: metal::RenderPipelineState,
     blur_pipeline_state: metal::RenderPipelineState,
     blur_composite_pipeline_state: metal::RenderPipelineState,
     smoothed_blur_composite_pipeline_state: metal::RenderPipelineState,
+    additive_blur_composite_pipeline_state: metal::RenderPipelineState,
+    additive_smoothed_blur_composite_pipeline_state: metal::RenderPipelineState,
     sampler: metal::SamplerState,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -478,6 +482,18 @@ impl MetalRenderer {
             smoothed_blur_composite_shader,
             MTLPixelFormat::BGRA8Unorm,
         );
+        let additive_blur_composite_pipeline_state = build_additive_pipeline_state(
+            &device,
+            &blur_composite_library,
+            blur_composite_shader,
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let additive_smoothed_blur_composite_pipeline_state = build_additive_pipeline_state(
+            &device,
+            &smoothed_blur_composite_library,
+            smoothed_blur_composite_shader,
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let sampler_descriptor = SamplerDescriptor::new();
         sampler_descriptor.set_min_filter(metal::MTLSamplerMinMagFilter::Linear);
@@ -512,6 +528,8 @@ impl MetalRenderer {
             blur_pipeline_state,
             blur_composite_pipeline_state,
             smoothed_blur_composite_pipeline_state,
+            additive_blur_composite_pipeline_state,
+            additive_smoothed_blur_composite_pipeline_state,
             sampler,
             instance_buffer_pool,
             sprite_atlas,
@@ -1381,26 +1399,43 @@ impl MetalRenderer {
                 color_attachment.set_load_action(metal::MTLLoadAction::Load);
             },
         );
-        let pipeline = if composite_uniforms.corner_smoothing > 0.0 {
-            &self.smoothed_blur_composite_pipeline_state
+        let (blend, additive) = if composite_uniforms.corner_smoothing > 0.0 {
+            (
+                &self.smoothed_blur_composite_pipeline_state,
+                &self.additive_smoothed_blur_composite_pipeline_state,
+            )
         } else {
-            &self.blur_composite_pipeline_state
+            (
+                &self.blur_composite_pipeline_state,
+                &self.additive_blur_composite_pipeline_state,
+            )
         };
-        encoder.set_render_pipeline_state(pipeline);
         bind_scene_uniforms(encoder, scene_uniforms);
-        encoder.set_vertex_bytes(
-            DATA_SLOT,
-            mem::size_of::<BlurUniforms>() as u64,
-            &composite_uniforms as *const BlurUniforms as *const _,
-        );
-        encoder.set_fragment_bytes(
-            DATA_SLOT,
-            mem::size_of::<BlurUniforms>() as u64,
-            &composite_uniforms as *const BlurUniforms as *const _,
-        );
         encoder.set_fragment_texture(PRIMARY_TEXTURE_SLOT, Some(composite_source));
         encoder.set_fragment_sampler_state(SAMPLER_SLOT, Some(&self.sampler));
-        encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+        let draw = |pipeline: &metal::RenderPipelineStateRef, uniforms: &BlurUniforms| {
+            encoder.set_render_pipeline_state(pipeline);
+            encoder.set_vertex_bytes(
+                DATA_SLOT,
+                mem::size_of::<BlurUniforms>() as u64,
+                uniforms as *const BlurUniforms as *const _,
+            );
+            encoder.set_fragment_bytes(
+                DATA_SLOT,
+                mem::size_of::<BlurUniforms>() as u64,
+                uniforms as *const BlurUniforms as *const _,
+            );
+            encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+        };
+        if clip_rounded {
+            // A backdrop replaces what was behind it, as CSS `backdrop-filter` does: blended
+            // over a translucent target, the content it blurred would still show through it.
+            // Its coverage erases the target, then its blurred sample is added in.
+            draw(blend, &composite_uniforms.coverage());
+            draw(additive, &composite_uniforms);
+        } else {
+            draw(blend, &composite_uniforms);
+        }
         encoder.end_encoding();
     }
 
@@ -2036,6 +2071,40 @@ fn build_path_sprite_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+
+    device
+        .new_render_pipeline_state(&descriptor)
+        .expect("could not create render pipeline state")
+}
+
+/// Adds the fragment's output to the target (One / One), for a backdrop's blurred sample once
+/// its coverage has erased what was behind it.
+fn build_additive_pipeline_state(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    shader: &NativeShader,
+    pixel_format: metal::MTLPixelFormat,
+) -> metal::RenderPipelineState {
+    let vertex_fn = library
+        .get_function(shader.vertex_entry, None)
+        .unwrap_or_else(|error| panic!("error locating {}: {error}", shader.vertex_entry));
+    let fragment_fn = library
+        .get_function(shader.fragment_entry, None)
+        .unwrap_or_else(|error| panic!("error locating {}: {error}", shader.fragment_entry));
+
+    let descriptor = metal::RenderPipelineDescriptor::new();
+    descriptor.set_label(shader.label);
+    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(true);
+    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -2807,6 +2876,79 @@ mod tests {
         assert!(
             drift >= 15,
             "blur mixes neighboring texels instead of passing through: {soft:?}",
+        );
+    }
+
+    #[test]
+    fn backdrop_blur_replaces_translucent_content() {
+        let mut renderer = MetalHeadlessRenderer::new();
+        renderer.renderer.update_transparency(true);
+        let full = Bounds {
+            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size: Size {
+                width: ScaledPixels(16.0),
+                height: ScaledPixels(16.0),
+            },
+        };
+        let box_bounds = Bounds {
+            origin: gpui::point(ScaledPixels(4.0), ScaledPixels(4.0)),
+            size: Size {
+                width: ScaledPixels(8.0),
+                height: ScaledPixels(8.0),
+            },
+        };
+        let mut filter = Scene::default();
+        // Translucent content on a transparent target, as in a window with a see-through
+        // background
+        filter.insert_primitive(Quad {
+            bounds: full,
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            background: checkerboard(hsla(0.2, 0.7, 0.5, 0.5), 2.0),
+            ..Default::default()
+        });
+        filter.insert_primitive(BackdropFilter {
+            bounds: box_bounds,
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            filters: smallvec::smallvec![ScaledFilter::Blur(ScaledPixels(8.0))],
+            opacity: 1.0,
+            ..Default::default()
+        });
+        filter.finish();
+        let Some(image) = render_for_contracts(
+            &mut renderer,
+            &filter,
+            Size {
+                width: DevicePixels(16),
+                height: DevicePixels(16),
+            },
+        ) else {
+            return;
+        };
+        // Outside the filter the checkerboard stays sharp...
+        let difference = |a: [u8; 4], b: [u8; 4]| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0)
+        };
+        let (on, off) = (pixel(&image, 2, 0), pixel(&image, 0, 0));
+        assert!(
+            difference(on, off) > 60,
+            "unfiltered squares differ: {on:?} {off:?}",
+        );
+        // ...and under it only the blur shows: blended over the content instead of
+        // replacing it, the sharp squares would show through it
+        let (left, right) = (pixel(&image, 7, 8), pixel(&image, 8, 8));
+        assert!(
+            difference(left, right) < 16,
+            "neighboring squares blur together: {left:?} {right:?}",
         );
     }
 

@@ -1,7 +1,7 @@
 pub use crate::shaders::{
     blur::BlurUniforms,
     common::{
-        BlurCompositeClip as ShaderBlurCompositeClip, Bounds as ShaderBounds,
+        BlurCompositeClip as ShaderBlurCompositeClip, BlurCompositeOutput, Bounds as ShaderBounds,
         Corners as ShaderCorners, DownsampleMode,
     },
 };
@@ -123,6 +123,16 @@ impl BlurUniforms {
             )
         }
     }
+
+    /// The same composite writing only its coverage, `(0, 0, 0, coverage × opacity)`. Drawn
+    /// with premultiplied blending, it erases the target by that much, so a backdrop's blurred
+    /// sample can then be added in place of what was behind it.
+    pub fn coverage(self) -> Self {
+        Self {
+            composite_output: BlurCompositeOutput::Coverage,
+            ..self
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -226,7 +236,7 @@ fn empty_uniforms(downsample_mode: DownsampleMode) -> BlurUniforms {
         source_size: vec2f(1.0, 1.0),
         target_size: vec2f(1.0, 1.0),
         corner_smoothing: 0.0,
-        padding0: 0,
+        composite_output: BlurCompositeOutput::Blurred,
         padding1: 0,
         padding2: 0,
     }

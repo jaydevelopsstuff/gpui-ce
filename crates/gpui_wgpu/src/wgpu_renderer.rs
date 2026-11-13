@@ -405,7 +405,7 @@ mod tests {
             )
             .uniforms,
             FrameUniformRequirements {
-                filter_count: 401,
+                filter_count: 501,
                 surface_count: 0,
             }
         );

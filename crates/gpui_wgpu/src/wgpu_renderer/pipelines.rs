@@ -75,6 +75,8 @@ pub(super) struct WgpuPipelines {
     pub(super) blur: WgpuRenderPipeline,
     pub(super) blur_composite: WgpuRenderPipeline,
     pub(super) smoothed_blur_composite: WgpuRenderPipeline,
+    pub(super) additive_blur_composite: WgpuRenderPipeline,
+    pub(super) additive_smoothed_blur_composite: WgpuRenderPipeline,
 }
 
 pub(super) struct WgpuRenderPipeline {
@@ -399,6 +401,7 @@ impl WgpuPipelines {
         let overwrite_target = color_target(surface_format, None);
         let composite_target =
             color_target(surface_format, Some(premultiplied_composite_blend_state()));
+        let additive_target = color_target(surface_format, Some(additive_blend_state()));
 
         let layout_for = |data_layout| match data_layout {
             shader::DataLayout::Instances => &instance_layout,
@@ -477,6 +480,18 @@ impl WgpuPipelines {
             smoothed_blur_composite: create(
                 shader::SMOOTHED_BLUR_COMPOSITE,
                 &composite_target,
+                1,
+                &shader_module,
+            ),
+            additive_blur_composite: create(
+                shader::BLUR_COMPOSITE,
+                &additive_target,
+                1,
+                &shader_module,
+            ),
+            additive_smoothed_blur_composite: create(
+                shader::SMOOTHED_BLUR_COMPOSITE,
+                &additive_target,
                 1,
                 &shader_module,
             ),
@@ -638,6 +653,20 @@ fn scene_blend_state(alpha_mode: wgpu::CompositeAlphaMode) -> wgpu::BlendState {
 
 fn premultiplied_composite_blend_state() -> wgpu::BlendState {
     source_over_blend_state(wgpu::BlendFactor::One)
+}
+
+/// Adds the fragment's output to the target, for a backdrop's blurred sample once its coverage
+/// has erased what was behind it.
+fn additive_blend_state() -> wgpu::BlendState {
+    let add = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    wgpu::BlendState {
+        color: add,
+        alpha: add,
+    }
 }
 
 fn source_over_blend_state(source_color_factor: wgpu::BlendFactor) -> wgpu::BlendState {
