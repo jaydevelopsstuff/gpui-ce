@@ -3034,6 +3034,7 @@ mod tests {
             content_mask: full_mask(),
             corner_radii: Default::default(),
             tile: poly,
+            transformation: Default::default(),
         });
         // Overlapping the image lifts this quad above it, splitting the quads into two
         // batches. The second one starts at instance 1 of the frame's quad buffer.

@@ -2,8 +2,8 @@ use crate::{
     AnyElement, AnyImageCache, App, AppContext, Asset, AssetLogger, Bounds, DefiniteLength,
     Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
-    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window,
-    decode_static_image, decode_static_image_from_decoder, px,
+    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Transformation,
+    Window, decode_static_image, decode_static_image_from_decoder, px,
 };
 use anyhow::Result;
 
@@ -129,6 +129,7 @@ where
 pub struct ImageStyle {
     grayscale: bool,
     object_fit: ObjectFit,
+    transformation: Option<Transformation>,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
 }
@@ -138,6 +139,7 @@ impl Default for ImageStyle {
         Self {
             grayscale: false,
             object_fit: ObjectFit::Contain,
+            transformation: None,
             loading: None,
             fallback: None,
         }
@@ -158,6 +160,13 @@ pub trait StyledImage: Sized {
     /// Set the object fit for the image.
     fn object_fit(mut self, object_fit: ObjectFit) -> Self {
         self.image_style().object_fit = object_fit;
+        self
+    }
+
+    /// Transform the image around the element's center. This affects rendering only,
+    /// without changing the hitbox or layout of the element.
+    fn with_transformation(mut self, transformation: Transformation) -> Self {
+        self.image_style().transformation = Some(transformation);
         self
     }
 
@@ -492,8 +501,15 @@ impl Element for Img {
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
                     let corner_radii = style.corner_radii.to_pixels(window.rem_size());
+                    let transformation = self
+                        .style
+                        .transformation
+                        .map(|transformation| {
+                            transformation.into_matrix(bounds.center(), window.scale_factor())
+                        })
+                        .unwrap_or_default();
                     window
-                        .paint_image(
+                        .paint_transformed_image(
                             bounds,
                             new_bounds,
                             corner_radii,
@@ -501,6 +517,7 @@ impl Element for Img {
                             data,
                             layout_state.frame_index,
                             self.style.grayscale,
+                            transformation,
                         )
                         .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {

@@ -153,8 +153,10 @@ impl Scene {
             });
         }
 
+        // A transformed sprite is ordered by where it lands, not by its untransformed
+        // bounds, or a rotated corner could draw under what it overlaps.
         let clipped_bounds = primitive
-            .bounds()
+            .transformed_bounds()
             .intersect(&primitive.content_mask().bounds);
 
         // Isolation boundaries stay paired even when their clipped region is empty.
@@ -417,6 +419,18 @@ impl Primitive {
             Primitive::BackdropFilter(filter) => &filter.bounds,
             Primitive::FilterBoundary(boundary) => &boundary.bounds,
         }
+    }
+
+    /// The bounds the primitive covers once its sprite transformation, if any, is
+    /// applied.
+    pub fn transformed_bounds(&self) -> Bounds<ScaledPixels> {
+        let transformation = match self {
+            Primitive::MonochromeSprite(sprite) => sprite.transformation,
+            Primitive::SubpixelSprite(sprite) => sprite.transformation,
+            Primitive::PolychromeSprite(sprite) => sprite.transformation,
+            _ => return *self.bounds(),
+        };
+        transformation.transform_bounds(*self.bounds())
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
@@ -1031,6 +1045,35 @@ impl TransformationMatrix {
         }
     }
 
+    /// The smallest bounds containing `bounds` once transformed.
+    pub fn transform_bounds(&self, bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
+        if *self == Self::unit() {
+            return bounds;
+        }
+        let corners = [
+            bounds.origin,
+            bounds.top_right(),
+            bounds.bottom_left(),
+            bounds.bottom_right(),
+        ]
+        .map(|corner| {
+            let [x, y] = [corner.x.0, corner.y.0];
+            [
+                self.translation[0] + self.rotation_scale[0][0] * x + self.rotation_scale[0][1] * y,
+                self.translation[1] + self.rotation_scale[1][0] * x + self.rotation_scale[1][1] * y,
+            ]
+        });
+        let (mut min, mut max) = (corners[0], corners[0]);
+        for [x, y] in corners {
+            min = [min[0].min(x), min[1].min(y)];
+            max = [max[0].max(x), max[1].max(y)];
+        }
+        Bounds::from_corners(
+            point(ScaledPixels(min[0]), ScaledPixels(min[1])),
+            point(ScaledPixels(max[0]), ScaledPixels(max[1])),
+        )
+    }
+
     /// Apply transformation to a point, mainly useful for debugging
     pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
         let input = [point.x.0, point.y.0];
@@ -1100,6 +1143,7 @@ pub struct PolychromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
+    pub transformation: TransformationMatrix,
 }
 
 impl From<PolychromeSprite> for Primitive {
@@ -1354,6 +1398,7 @@ mod tests {
                 padding: 0,
                 bounds: Bounds::<DevicePixels>::default(),
             },
+            transformation: TransformationMatrix::unit(),
         }
     }
 

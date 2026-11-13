@@ -3091,6 +3091,7 @@ mod tests {
             },
             corner_radii: Corners::all(ScaledPixels(1.0)),
             tile,
+            transformation: Default::default(),
         });
         sprite.finish();
         let Some(image) = render_for_contracts(
@@ -3154,6 +3155,92 @@ mod tests {
         assert!(
             (150..=195).contains(&brightest),
             "75% opacity caps the brightest texel near 191, got {brightest}",
+        );
+    }
+
+    #[test]
+    fn generated_sprite_shader_turns_with_its_transformation() {
+        let mut renderer = MetalHeadlessRenderer::new();
+        let key = AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(1),
+            frame_index: 0,
+        });
+        // Enough texels that sampling near the turned tips stays clear of the
+        // atlas around the tile
+        let red = [0u8, 0, 255, 255].repeat(16 * 16);
+        let tile = renderer
+            .sprite_atlas()
+            .get_or_insert_with(&key, &mut || {
+                Ok(Some((
+                    Size {
+                        width: DevicePixels(16),
+                        height: DevicePixels(16),
+                    },
+                    Cow::Borrowed(&red),
+                )))
+            })
+            .unwrap()
+            .unwrap();
+        // A 20px square turned 45° about its center, (16, 16): a diamond reaching
+        // ~14px from the center along each axis, its untransformed corners left
+        // uncovered.
+        let center = gpui::point(ScaledPixels(16.0), ScaledPixels(16.0));
+        let rotation = TransformationMatrix::unit()
+            .translate(center)
+            .rotate(gpui::radians(std::f32::consts::FRAC_PI_4))
+            .translate(gpui::point(ScaledPixels(-16.0), ScaledPixels(-16.0)));
+        let full = Bounds {
+            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size: Size {
+                width: ScaledPixels(32.0),
+                height: ScaledPixels(32.0),
+            },
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(PolychromeSprite {
+            order: 0,
+            grayscale: gpui::ShaderBool::Disabled,
+            opacity: 1.0,
+            corner_smoothing: 0.0,
+            bounds: Bounds {
+                origin: gpui::point(ScaledPixels(6.0), ScaledPixels(6.0)),
+                size: Size {
+                    width: ScaledPixels(20.0),
+                    height: ScaledPixels(20.0),
+                },
+            },
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            corner_radii: Corners::all(ScaledPixels(2.0)),
+            tile,
+            transformation: rotation,
+        });
+        scene.finish();
+        let Some(image) = render_for_contracts(
+            &mut renderer,
+            &scene,
+            Size {
+                width: DevicePixels(32),
+                height: DevicePixels(32),
+            },
+        ) else {
+            return;
+        };
+        let red = [255, 0, 0, 255];
+        let clear = [0, 0, 0, 255];
+        assert_pixel_close(&image, 16, 16, red, 2, "center");
+        assert_pixel_close(&image, 16, 4, red, 2, "tip past the untransformed top");
+        assert_pixel_close(&image, 4, 16, red, 2, "tip past the untransformed left");
+        assert_pixel_close(&image, 7, 7, clear, 2, "untransformed top-left corner");
+        assert_pixel_close(
+            &image,
+            24,
+            24,
+            clear,
+            2,
+            "untransformed bottom-right corner",
         );
     }
 

@@ -187,6 +187,7 @@ fn every_primitive_kind_renders() {
         content_mask: full_mask(),
         corner_radii: Default::default(),
         tile: poly,
+        transformation: Default::default(),
     });
     // 7. A second quad batch. Overlapping the image pushes this quad above it in draw
     //    order, so it starts past the first quads in the frame's quad buffer: a backend
@@ -306,6 +307,94 @@ fn every_primitive_kind_renders() {
 }
 
 #[test]
+fn polychrome_sprite_transformation_turns_the_image() {
+    let mut renderer = WgpuHeadlessRenderer::new().expect("headless renderer");
+    let poly = tile(
+        &renderer,
+        AtlasKey::Image(RenderImageParams {
+            image_id: gpui::ImageId(2),
+            frame_index: 0,
+        }),
+        // BGRA red, opaque.
+        (0..64).flat_map(|_| [0u8, 0, 255, 255]).collect(),
+    );
+    let mut scene = Scene::default();
+    scene.insert_primitive(Quad {
+        bounds: bounds(0.0, 0.0, 310.0, 100.0),
+        content_mask: full_mask(),
+        background: solid_background(gpui::black()),
+        ..Default::default()
+    });
+    // A 40px square turned 45° about its center, (50, 50): a diamond reaching ~28px
+    // from the center along each axis, its untransformed corners left uncovered.
+    let rotation = gpui::TransformationMatrix::unit()
+        .translate(gpui::point(ScaledPixels(50.0), ScaledPixels(50.0)))
+        .rotate(gpui::radians(std::f32::consts::FRAC_PI_4))
+        .translate(gpui::point(ScaledPixels(-50.0), ScaledPixels(-50.0)));
+    scene.insert_primitive(PolychromeSprite {
+        order: 0,
+        grayscale: ShaderBool::Disabled,
+        opacity: 1.0,
+        corner_smoothing: 0.0,
+        bounds: bounds(30.0, 30.0, 40.0, 40.0),
+        content_mask: full_mask(),
+        // Rounded corners turn with the image: measured in its own space, its
+        // sides stay straight
+        corner_radii: Corners::all(ScaledPixels(4.0)),
+        tile: poly,
+        transformation: rotation,
+    });
+    // Drawn after the sprite, over its turned tip but clear of its untransformed
+    // bounds: still ordered above it.
+    scene.insert_primitive(Quad {
+        bounds: bounds(46.0, 23.0, 8.0, 4.0),
+        content_mask: full_mask(),
+        background: solid_background(gpui::white()),
+        ..Default::default()
+    });
+    scene.finish();
+
+    let image = renderer
+        .render_scene_to_image(&scene, TARGET)
+        .expect("render must succeed");
+    let red = |x: u32, y: u32| {
+        let [r, g, b, _] = image.get_pixel(x, y).0;
+        r > 200 && g < 40 && b < 40
+    };
+    let black = |x: u32, y: u32| {
+        let [r, g, b, _] = image.get_pixel(x, y).0;
+        r < 40 && g < 40 && b < 40
+    };
+    let mut failures = Vec::new();
+    for (name, x, y, ok) in [
+        ("center", 50, 50, red(50, 50)),
+        ("tip past the untransformed top", 50, 28, red(50, 28)),
+        ("tip past the untransformed left", 26, 50, red(26, 50)),
+        ("tip past the untransformed right", 73, 50, red(73, 50)),
+        ("untransformed top-left corner", 32, 32, black(32, 32)),
+        ("untransformed bottom-right corner", 67, 67, black(67, 67)),
+        ("along a turned side", 40, 40, red(40, 40)),
+    ] {
+        if !ok {
+            failures.push(format!("{name} ({x},{y}): {:?}", image.get_pixel(x, y).0));
+        }
+    }
+    let [r, g, b, _] = image.get_pixel(50, 25).0;
+    if !(r > 200 && g > 200 && b > 200) {
+        failures.push(format!("quad over the tip (50,25): {:?}", [r, g, b]));
+    }
+    if !failures.is_empty() {
+        let path = std::env::temp_dir().join("gpui_headless_rotated_sprite.png");
+        image.save(&path).ok();
+        panic!(
+            "{}\n(image saved to {})",
+            failures.join("\n"),
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn smoothed_primitives_share_one_contour() {
     let mut renderer = WgpuHeadlessRenderer::new().expect("headless renderer");
     let image_tile = tile(
@@ -382,6 +471,7 @@ fn smoothed_primitives_share_one_contour() {
         content_mask,
         corner_radii: radii,
         tile: image_tile,
+        transformation: Default::default(),
     });
 
     let drop_element = bounds(20.0, 96.0, 50.0, 44.0);

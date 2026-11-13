@@ -199,7 +199,7 @@ impl InteractiveElement for Svg {
     }
 }
 
-/// A transformation to apply to an SVG element.
+/// A transformation to apply to an SVG or image element.
 #[derive(Clone, Copy, Debug, PartialEq, derive_setters::Setters)]
 #[setters(generate = false)]
 pub struct Transformation {
@@ -253,7 +253,11 @@ impl Transformation {
         }
     }
 
-    fn into_matrix(self, center: Point<Pixels>, scale_factor: f32) -> TransformationMatrix {
+    pub(crate) fn into_matrix(
+        self,
+        center: Point<Pixels>,
+        scale_factor: f32,
+    ) -> TransformationMatrix {
         //Note: if you read this as a sequence of matrix multiplications, start from the bottom
         TransformationMatrix::unit()
             .translate(center.scale(scale_factor) + self.translate.scale(scale_factor))

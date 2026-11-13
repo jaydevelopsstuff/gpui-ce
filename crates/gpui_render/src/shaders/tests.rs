@@ -108,7 +108,8 @@ fn scene_instance_storage_sizes_are_bounded() {
         (
             "PolychromeSprite",
             std::mem::size_of::<gpui::PolychromeSprite>(),
-            112,
+            // 112, plus a transformation as the other sprites carry
+            136,
         ),
     ] {
         assert!(

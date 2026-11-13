@@ -4017,7 +4017,10 @@ impl Window {
         self.content_mask_stack.push(ContentMask {
             bounds: Bounds {
                 origin: point(unscale(mask.bounds.origin.x), unscale(mask.bounds.origin.y)),
-                size: size(unscale(mask.bounds.size.width), unscale(mask.bounds.size.height)),
+                size: size(
+                    unscale(mask.bounds.size.width),
+                    unscale(mask.bounds.size.height),
+                ),
             },
             fade_out: Edges {
                 top: unscale(mask.fade_out.top),
@@ -4975,6 +4978,7 @@ impl Window {
                     content_mask,
                     tile,
                     opacity: 1.0,
+                    transformation: TransformationMatrix::unit(),
                 });
             }
         }
@@ -5141,6 +5145,36 @@ impl Window {
         frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
+        self.paint_transformed_image(
+            bounds,
+            image_bounds,
+            corner_radii,
+            corner_smoothing,
+            data,
+            frame_index,
+            grayscale,
+            TransformationMatrix::unit(),
+        )
+    }
+
+    /// Like [`Window::paint_image`], with `transformation` applied to the painted image
+    /// (in scaled pixels, as [`Window::paint_svg`] takes it). The corner radii and the
+    /// clipping to `bounds` happen before it, so they turn with the image.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "paint_image's, plus the transformation"
+    )]
+    pub fn paint_transformed_image(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        corner_smoothing: f32,
+        data: Arc<RenderImage>,
+        frame_index: usize,
+        grayscale: bool,
+        transformation: TransformationMatrix,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let visible_bounds = bounds.intersect(&image_bounds);
@@ -5225,6 +5259,7 @@ impl Window {
             corner_radii,
             tile: sub_tile,
             opacity: 1.0,
+            transformation,
         });
         Ok(())
     }

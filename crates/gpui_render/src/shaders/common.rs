@@ -270,6 +270,18 @@ mod source {
         pub fn transform_position(transform: TransformationMatrix, position: Vec2f) -> Vec2f {
             transpose(transform.rotation_scale) * position + transform.translation
         }
+
+        /// Where `position` was before `transform` moved it there: a sprite's own
+        /// space, which its corner radii are measured in. Worked out per fragment
+        /// rather than passed from the vertex, keeping the vertex output compact.
+        pub fn untransform_position(transform: TransformationMatrix, position: Vec2f) -> Vec2f {
+            let matrix = transform.rotation_scale;
+            let offset = position - transform.translation;
+            vec2f(
+                matrix[1usize].y * offset.x - matrix[0usize].y * offset.y,
+                matrix[0usize].x * offset.y - matrix[1usize].x * offset.x,
+            ) / determinant(matrix)
+        }
     }
 
     #[derive(Clone, Copy, Wgsl)]

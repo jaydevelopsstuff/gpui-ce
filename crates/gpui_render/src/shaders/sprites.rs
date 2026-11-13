@@ -177,6 +177,7 @@ pub mod polychrome_sprite {
         pub content_mask: ContentMask,
         pub corner_radii: Corners,
         pub tile: AtlasTile,
+        pub transformation: TransformationMatrix,
     }
     storage!(group(1), binding(0), POLYCHROME_SPRITES: RuntimeArray<PolychromeSprite>);
     texture!(group(1), binding(1), POLYCHROME_TEXTURE: Texture2D<f32>);
@@ -195,7 +196,7 @@ pub mod polychrome_sprite {
         instance_id: u32,
         sprite: PolychromeSprite,
     ) -> PolychromeVertexData {
-        let vertex = rectangle_vertex(vertex_id, sprite.bounds);
+        let vertex = transformed_rectangle_vertex(vertex_id, sprite.bounds, sprite.transformation);
         PolychromeVertexData {
             position: vertex.clip_position,
             tile_position: atlas_texture_coordinates(
@@ -258,7 +259,10 @@ pub mod polychrome_sprite {
             color,
             sprite.opacity
                 * antialiased_coverage(rounded_rectangle_signed_distance(
-                    input.position.xy(),
+                    TransformationMatrix::untransform_position(
+                        sprite.transformation,
+                        input.position.xy(),
+                    ),
                     sprite.bounds,
                     sprite.corner_radii,
                 ))
@@ -328,7 +332,10 @@ pub mod polychrome_sprite {
             color,
             sprite.opacity
                 * antialiased_coverage(prepared_corner_signed_distance(
-                    input.position.xy(),
+                    TransformationMatrix::untransform_position(
+                        sprite.transformation,
+                        input.position.xy(),
+                    ),
                     sprite.bounds,
                     sprite.corner_radii,
                     sprite.corner_smoothing,

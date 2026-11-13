@@ -127,7 +127,8 @@ pub const SCENE_BUFFER_LAYOUTS: &[SceneBufferLayout] = &[
         bounds,
         content_mask,
         corner_radii,
-        tile
+        tile,
+        transformation
     ),
 ];
 
