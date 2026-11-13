@@ -4,7 +4,7 @@ use crate::{
     LayoutId, LineLayout, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParagraphDirection, Pixels,
     Point, ShapedText, ShapedTextLayout, SharedString, Size, TextAlign, TextLayoutOptions,
     TextOverflow, TextRangeExt, TextRun, TextStyle, TextTransform, TooltipId, UnicodeBidi,
-    WhiteSpace, Window, px, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    WhiteSpace, Window, WordBreak, px, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -857,12 +857,20 @@ impl TextLayout {
             UnicodeBidi::Plaintext => ParagraphDirection::Auto,
             _ => resolved_direction.into(),
         };
+        // Text that may break between any two characters is as narrow as its
+        // widest one, as CSS sizes it, so it can shrink where it sits
+        let min_content = text_style.word_break == WordBreak::BreakAll
+            && known_dimensions.width.is_none()
+            && available_space.width == crate::AvailableSpace::MinContent;
         let options = TextLayoutOptions {
             wrap_width: match text_style.white_space {
+                WhiteSpace::Normal if min_content => Some(Pixels::ZERO),
                 WhiteSpace::Normal => alignment_width,
                 WhiteSpace::Nowrap => None,
             },
             line_clamp: text_style.line_clamp,
+            word_break: text_style.word_break,
+            overflow_wrap: text_style.overflow_wrap,
             alignment_width,
             text_align: text_style.text_align,
             direction,

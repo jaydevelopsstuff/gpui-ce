@@ -1263,3 +1263,45 @@ impl Render for InlineTooltip {
             .debug_selector(|| "inline-tooltip".into())
     }
 }
+
+struct FlexRowName {
+    break_all: bool,
+}
+
+impl Render for FlexRowName {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().items_start().child(
+            div().w(px(120.)).flex().child(
+                div()
+                    .debug_selector(|| "name".into())
+                    .font_family(NOTO_SANS.family)
+                    .text_size(px(16.))
+                    .when(self.break_all, |name| name.break_all())
+                    .child("a_long_file_name_without_any_spaces.txt"),
+            ),
+        )
+    }
+}
+
+#[test]
+fn break_all_text_shrinks_to_its_flex_row() {
+    let mut cx = headless();
+    let bounds = |cx: &mut HeadlessAppContext, break_all| {
+        let window = cx
+            .open_window(size(px(360.), px(300.)), |window, cx| {
+                window.set_scale_factor(SCALE_FACTOR);
+                cx.new(|_| FlexRowName { break_all })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.debug_bounds(window.into(), "name").unwrap().unwrap()
+    };
+
+    // A word is as narrow as text gets, so the row can't shrink it
+    let whole = bounds(&mut cx, false);
+    assert!(whole.size.width > px(120.), "{whole:?}");
+
+    let broken = bounds(&mut cx, true);
+    assert!(broken.size.width <= px(120.), "{broken:?}");
+    assert!(broken.size.height > whole.size.height, "{broken:?}");
+}

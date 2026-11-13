@@ -2,9 +2,10 @@ use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Edges, Fill, Filter, FlexDirection, FlexWrap, Font, FontFeatures,
     FontStyle, FontWeight, FontWidth, GridPlacement, GridTemplate, GridTemplateMinSize,
-    JustifyContent, LayoutDirection, Length, Pixels, SharedString, StrikethroughStyle,
-    StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, TextTransform, UnderlineStyle,
-    UnicodeBidi, VerticalAlign, WhiteSpace, px, relative, rems,
+    JustifyContent, LayoutDirection, Length, OverflowWrap, Pixels, SharedString,
+    StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement,
+    TextTransform, UnderlineStyle, UnicodeBidi, VerticalAlign, WhiteSpace, WordBreak, px, relative,
+    rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -239,6 +240,28 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/whitespace#nowrap)
     fn whitespace_nowrap(mut self) -> Self {
         self.text_style().white_space = Some(WhiteSpace::Nowrap);
+        self
+    }
+
+    /// Lets lines break between any two characters of the element's text.
+    /// [Docs](https://tailwindcss.com/docs/word-break#break-all)
+    fn break_all(mut self) -> Self {
+        self.text_style().word_break = Some(WordBreak::BreakAll);
+        self
+    }
+
+    /// Lets a word too long for its line break where it has to.
+    /// [Docs](https://tailwindcss.com/docs/overflow-wrap#break-word)
+    fn break_words(mut self) -> Self {
+        self.text_style().overflow_wrap = Some(OverflowWrap::BreakWord);
+        self
+    }
+
+    /// Breaks the element's text between words only.
+    /// [Docs](https://tailwindcss.com/docs/word-break#normal)
+    fn break_normal(mut self) -> Self {
+        self.text_style().word_break = Some(WordBreak::Normal);
+        self.text_style().overflow_wrap = Some(OverflowWrap::Normal);
         self
     }
 

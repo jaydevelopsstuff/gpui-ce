@@ -1,4 +1,4 @@
-use crate::{Pixels, ResolvedDirection, TextAlign, TextRun, UnicodeBidi};
+use crate::{OverflowWrap, Pixels, ResolvedDirection, TextAlign, TextRun, UnicodeBidi, WordBreak};
 
 /// The paragraph base-direction policy supplied to a text backend.
 #[doc(hidden)]
@@ -30,6 +30,10 @@ pub struct TextLayoutOptions {
     pub wrap_width: Option<Pixels>,
     /// Optional maximum number of visual rows.
     pub line_clamp: Option<usize>,
+    /// Where lines may break within a word.
+    pub word_break: WordBreak,
+    /// Whether a word too long for its line may break.
+    pub overflow_wrap: OverflowWrap,
     /// Width used for horizontal alignment, independently of wrapping.
     pub alignment_width: Option<Pixels>,
     /// Horizontal text alignment.

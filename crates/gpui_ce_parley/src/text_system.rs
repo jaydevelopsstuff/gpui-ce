@@ -20,7 +20,8 @@ use parley::{
     Affinity, Alignment, AlignmentOptions, CHROMIUM_LINE_BREAK_OVERRIDE, Cluster, Cursor,
     FontContext, FontFamily, FontFamilyName, FontFeature, FontFeatures, FontStyle,
     FontVariation as ParleyFontVariation, FontWeight, GenericFamily, InlineBox, InlineBoxKind,
-    Layout, LayoutContext, Line, LineHeight, PositionedLayoutItem, Selection, StyleProperty,
+    Layout, LayoutContext, Line, LineBreakContext, LineBreakOverrideFn, LineHeight,
+    PositionedLayoutItem, Selection, StyleProperty,
 };
 use skrifa::instance::NormalizedCoord;
 use std::{
@@ -66,6 +67,15 @@ impl From<&TextRun> for ParleyShapingRun {
     }
 }
 
+/// Chromium's ASCII pair table keeps words whole, so under `break-all`, which
+/// it skips too, only its break after a run of spaces stays.
+static BREAK_ALL_LINE_BREAK_OVERRIDE: &LineBreakOverrideFn =
+    &(break_all_line_break_override as fn(LineBreakContext) -> Option<bool>);
+
+fn break_all_line_break_override(cx: LineBreakContext) -> Option<bool> {
+    (cx.before == ' ' && cx.after != ' ').then_some(true)
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ParagraphCacheKey {
     font_generation: u64,
@@ -75,6 +85,8 @@ struct ParagraphCacheKey {
     inline_boxes: Vec<InlineBoxRequest>,
     text_styles: Vec<InlineTextStyle>,
     line_height: Option<Pixels>,
+    word_break: gpui::WordBreak,
+    overflow_wrap: gpui::OverflowWrap,
 }
 
 struct BoundedCache<Key, Value, const CAPACITY: usize> {
@@ -1723,6 +1735,8 @@ impl ParleyTextSystem {
         let TextLayoutOptions {
             wrap_width,
             line_clamp,
+            word_break,
+            overflow_wrap,
             text_align,
             alignment_width,
             direction,
@@ -1763,6 +1777,8 @@ impl ParleyTextSystem {
             inline_boxes: inline_boxes.to_vec(),
             text_styles: text_styles.to_vec(),
             line_height,
+            word_break,
+            overflow_wrap,
         };
         let result_cache_key = ParagraphResultCacheKey {
             paragraph: cache_key.clone(),
@@ -1832,8 +1848,19 @@ impl ParleyTextSystem {
                 layout_context,
             } = &mut *state;
             let mut builder = layout_context.ranged_builder(font_context, text, 1.0, false);
-            builder.set_line_break_override(Some(CHROMIUM_LINE_BREAK_OVERRIDE));
+            builder.set_line_break_override(Some(match word_break {
+                gpui::WordBreak::Normal => CHROMIUM_LINE_BREAK_OVERRIDE,
+                gpui::WordBreak::BreakAll => BREAK_ALL_LINE_BREAK_OVERRIDE,
+            }));
             builder.push_default(StyleProperty::FontSize(f32::from(font_size)));
+            builder.push_default(StyleProperty::WordBreak(match word_break {
+                gpui::WordBreak::Normal => parley::WordBreak::Normal,
+                gpui::WordBreak::BreakAll => parley::WordBreak::BreakAll,
+            }));
+            builder.push_default(StyleProperty::OverflowWrap(match overflow_wrap {
+                gpui::OverflowWrap::Normal => parley::OverflowWrap::Normal,
+                gpui::OverflowWrap::BreakWord => parley::OverflowWrap::BreakWord,
+            }));
 
             let default_optical_settings = self.automatic_optical_sizing.then(|| {
                 [ParleyFontVariation::new(
@@ -2468,10 +2495,10 @@ mod tests {
     use gpui::{
         AppContext, CaretSelection, Context, FontFallbacks, FontFeatures as GpuiFontFeatures,
         FontStyle as GpuiFontStyle, FontSynthesis, FontWeight as GpuiFontWeight, GlyphRenderMode,
-        HeadlessAppContext, HighlightStyle, Hsla, IntoElement, Point, RasterFace,
+        HeadlessAppContext, HighlightStyle, Hsla, IntoElement, OverflowWrap, Point, RasterFace,
         RasterizedGlyphFormat, Render, StrikethroughStyle, Styled, StyledText, TestTextSystem,
-        TextSystem, UnderlineStyle, VerticalAlign, Window, WindowHandle, WindowTextSystem, div,
-        font, hsla, prelude::*,
+        TextSystem, UnderlineStyle, VerticalAlign, Window, WindowHandle, WindowTextSystem,
+        WordBreak, div, font, hsla, prelude::*,
     };
     use gpui_fonts::{
         IBM_PLEX, IBM_PLEX_SEMIBOLD, LILEX, NOTO_ARABIC, NOTO_COLOR_EMOJI, NOTO_HEBREW, NOTO_SANS,
@@ -4065,6 +4092,59 @@ mod tests {
 
         assert_paragraph_break_interaction(&system);
         assert_native_cluster_interaction(&system);
+    }
+
+    #[test]
+    fn word_break_and_overflow_wrap_break_long_words() {
+        let system = test_system();
+        let text = "a_very_long_file_name_without_any_spaces.txt";
+        let runs = [text_run(text, IBM_PLEX.family)];
+        let lines = |word_break, overflow_wrap| {
+            layout_with_options(
+                &system,
+                text,
+                px(16.0),
+                &runs,
+                TextLayoutOptions {
+                    wrap_width: Some(px(100.0)),
+                    word_break,
+                    overflow_wrap,
+                    text_align: TextAlign::Left,
+                    ..Default::default()
+                },
+            )
+            .visual_lines
+            .len()
+        };
+        // Laid out first, so a cached paragraph would carry its breaks over
+        assert_eq!(lines(WordBreak::Normal, OverflowWrap::Normal), 1);
+        assert!(lines(WordBreak::BreakAll, OverflowWrap::Normal) > 1);
+        assert!(lines(WordBreak::Normal, OverflowWrap::BreakWord) > 1);
+    }
+
+    #[test]
+    fn break_all_fills_each_line_past_word_boundaries() {
+        let system = test_system();
+        let text = "Holiday photos from the summer";
+        let runs = [text_run(text, IBM_PLEX.family)];
+        let layout = layout_with_options(
+            &system,
+            text,
+            px(16.0),
+            &runs,
+            TextLayoutOptions {
+                wrap_width: Some(px(80.0)),
+                word_break: WordBreak::BreakAll,
+                text_align: TextAlign::Left,
+                ..Default::default()
+            },
+        );
+        let first_end = layout.visual_lines[0].text_range.end;
+        assert!(
+            !text[..first_end].ends_with(' '),
+            "broke at a space: {:?}",
+            &text[..first_end]
+        );
     }
 
     #[test]

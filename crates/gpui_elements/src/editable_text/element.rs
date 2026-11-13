@@ -704,6 +704,8 @@ impl PrelayoutState {
                 let options = TextLayoutOptions {
                     wrap_width,
                     line_clamp: text_style.line_clamp,
+                    word_break: text_style.word_break,
+                    overflow_wrap: text_style.overflow_wrap,
                     alignment_width,
                     text_align: text_style.text_align,
                     direction,
@@ -1586,7 +1588,9 @@ mod tests {
             let performed = fixture
                 .cx
                 .update_window(window.into(), |_, window, cx| {
-                    input.update(cx, |state, cx| state.perform_text_command(command, window, cx))
+                    input.update(cx, |state, cx| {
+                        state.perform_text_command(command, window, cx)
+                    })
                 })
                 .unwrap();
             fixture.cx.run_until_parked();

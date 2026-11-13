@@ -583,6 +583,26 @@ pub enum WhiteSpace {
     Nowrap,
 }
 
+/// Where lines may break within a word, as CSS's `word-break`
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum WordBreak {
+    /// Only between words
+    #[default]
+    Normal,
+    /// Between any two characters, words or not
+    BreakAll,
+}
+
+/// Whether a word too long for its line may break, as CSS's `overflow-wrap`
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum OverflowWrap {
+    /// It overflows the line
+    #[default]
+    Normal,
+    /// It breaks wherever it has to, without changing the text's min-content width
+    BreakWord,
+}
+
 /// How to truncate text that overflows the width of the element
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
@@ -689,6 +709,12 @@ pub struct TextStyle {
     /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
 
+    /// Where lines may break within a word
+    pub word_break: WordBreak,
+
+    /// Whether a word too long for its line may break
+    pub overflow_wrap: OverflowWrap,
+
     /// The text should be truncated if it overflows the width of the element
     pub text_overflow: Option<TextOverflow>,
 
@@ -724,6 +750,8 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            word_break: WordBreak::Normal,
+            overflow_wrap: OverflowWrap::Normal,
             text_overflow: None,
             text_align: TextAlign::default(),
             line_clamp: None,
