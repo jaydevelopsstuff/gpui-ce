@@ -991,10 +991,29 @@ impl Style {
         cx: &mut App,
         continuation: impl FnOnce(&mut Window, &mut App),
     ) {
+        // A translucent element's backdrop is painted outside its opacity group, at its opacity.
+        // Inside, the backdrop would replace only the group's own empty target, and the group
+        // composited over the content it blurred would let that content show through, in a
+        // translucent window, until the element turned opaque.
+        let opacity = self.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+        let backdrop_outside = opacity < 1.0
+            && !self.backdrop_filter.is_empty()
+            && window.current_inline_fragments.is_none();
+        if backdrop_outside && opacity > 0.0 {
+            let (corner_radii, corner_smoothing) = self.corners(bounds, window);
+            window.paint_backdrop_filter_with_opacity(
+                bounds,
+                corner_radii,
+                corner_smoothing,
+                &self.backdrop_filter,
+                opacity,
+            );
+        }
+
         window.with_element_opacity(self.opacity, |window| {
             if let Some(fragments) = window.current_inline_fragments.clone() {
                 for fragment in fragments.iter() {
-                    self.paint_box(*fragment, window, cx, |_, _| {});
+                    self.paint_box(*fragment, true, window, cx, |_, _| {});
                 }
 
                 continuation(window, cx);
@@ -1002,13 +1021,24 @@ impl Style {
                 return;
             }
 
-            self.paint_box(bounds, window, cx, continuation);
+            self.paint_box(bounds, !backdrop_outside, window, cx, continuation);
         });
     }
 
+    /// This style's corner radii at `bounds`' size, and its corner smoothing.
+    fn corners(&self, bounds: Bounds<Pixels>, window: &Window) -> (Corners<Pixels>, f32) {
+        let corner_radii = self
+            .corner_radii
+            .to_pixels(window.rem_size())
+            .clamp_radii_for_quad_size(bounds.size);
+        (corner_radii, self.corner_smoothing.unwrap_or_default())
+    }
+
+    /// Paints the box at `bounds`, its backdrop too when `backdrop`.
     fn paint_box(
         &self,
         bounds: Bounds<Pixels>,
+        backdrop: bool,
         window: &mut Window,
         cx: &mut App,
         continuation: impl FnOnce(&mut Window, &mut App),
@@ -1028,11 +1058,7 @@ impl Style {
         }
 
         let rem_size = window.rem_size();
-        let corner_radii = self
-            .corner_radii
-            .to_pixels(rem_size)
-            .clamp_radii_for_quad_size(bounds.size);
-        let corner_smoothing = self.corner_smoothing.unwrap_or_default();
+        let (corner_radii, corner_smoothing) = self.corners(bounds, window);
 
         let current_color = self.text.color.unwrap_or_else(|| window.text_style().color);
 
@@ -1044,7 +1070,7 @@ impl Style {
 
         // Blur the content behind this element before its (typically translucent) background
         // is painted on top, so the background tints the frosted backdrop (CSS `backdrop-filter`).
-        if !self.backdrop_filter.is_empty() {
+        if backdrop && !self.backdrop_filter.is_empty() {
             window.paint_backdrop_filter(
                 bounds,
                 corner_radii,

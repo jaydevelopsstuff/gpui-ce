@@ -4614,6 +4614,26 @@ impl Window {
         corner_smoothing: f32,
         filters: &[Filter],
     ) {
+        self.paint_backdrop_filter_with_opacity(
+            bounds,
+            corner_radii,
+            corner_smoothing,
+            filters,
+            1.0,
+        );
+    }
+
+    /// [`Self::paint_backdrop_filter`], replacing what's behind `bounds` only by `opacity`: the
+    /// result is the backdrop and its filtered form mixed by `opacity`, as CSS composites an
+    /// element with a `backdrop-filter` and an `opacity`.
+    pub(crate) fn paint_backdrop_filter_with_opacity(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        corner_smoothing: f32,
+        filters: &[Filter],
+        opacity: f32,
+    ) {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
@@ -4633,7 +4653,7 @@ impl Window {
             corner_radii: corner_radii.scale(scale_factor),
             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
             filters,
-            opacity: 1.0,
+            opacity: opacity.clamp(0.0, 1.0),
         });
     }
 
@@ -8584,6 +8604,42 @@ mod tests {
             root.style().corner_smoothing = Some(1.5);
             root
         }
+    }
+
+    struct FadingBackdropView;
+
+    impl Render for FadingBackdropView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(40.))
+                .bg(crate::white().opacity(0.2))
+                .backdrop_blur(px(4.))
+                .opacity(0.25)
+        }
+    }
+
+    #[gpui::test]
+    fn a_translucent_elements_backdrop_is_painted_outside_its_group(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| FadingBackdropView);
+        window
+            .update(cx, |_, window, _| {
+                let scene = &window.rendered_frame.scene;
+                let [backdrop] = scene.backdrop_filters.as_slice() else {
+                    panic!("one backdrop, not {}", scene.backdrop_filters.len());
+                };
+                assert_eq!(backdrop.opacity, 0.25);
+                let group = scene
+                    .filter_boundaries
+                    .iter()
+                    .find(|boundary| boundary.is_start && boundary.filters.is_empty())
+                    .expect("the element's opacity group");
+                assert_eq!(group.opacity, 0.25);
+                assert!(
+                    backdrop.order < group.order,
+                    "the backdrop replaces what's behind the group, not the group's own target"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
