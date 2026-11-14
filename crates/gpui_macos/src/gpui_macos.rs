@@ -4,6 +4,7 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
+mod backdrops;
 mod dispatcher;
 mod display;
 mod display_link;

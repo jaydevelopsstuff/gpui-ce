@@ -1,7 +1,9 @@
 use crate::{
     MacDisplay, TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, WindowFrameSource,
-    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
-    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, renderer,
+    backdrops::{Backdrops, Placement},
+    events::platform_input_from_native,
+    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
+    renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -821,6 +823,8 @@ struct MacWindowState {
     cursor_visible: Arc<AtomicBool>,
     frame_source: Option<WindowFrameSource>,
     renderer: renderer::Renderer,
+    /// The view's backing layer, holding the Metal layer and the native backdrops under it
+    backdrops: Backdrops,
     /// Forces an uncached scene after GPU recovery or a transient presentation failure.
     force_render_pending: bool,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -1264,6 +1268,7 @@ impl MacWindow {
                 cursor_style: CursorStyle::Arrow,
                 cursor_visible,
                 frame_source: None,
+                backdrops: Backdrops::new(renderer.layer_ptr().cast()),
                 renderer,
                 force_render_pending: false,
                 request_frame_callback: None,
@@ -2156,12 +2161,39 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &gpui::Scene) {
         let mut this = self.0.lock();
+        let scale_factor = this.scale_factor();
+        let placements: Vec<Placement> = scene
+            .backdrop_filters
+            .iter()
+            .filter_map(|filter| Placement::of(filter, scale_factor))
+            .collect();
+        // Backdrops that move with this frame move in the transaction that presents it
+        let moved = this.backdrops.differ(&placements);
+        let presented_with_transaction = this
+            .renderer
+            .layer()
+            .is_some_and(|layer| layer.presents_with_transaction());
+        if moved {
+            this.renderer.set_presents_with_transaction(true);
+            unsafe {
+                let () = msg_send![class!(CATransaction), begin];
+                let () = msg_send![class!(CATransaction), setDisableActions: true];
+            }
+            this.backdrops.show(placements);
+        }
         #[cfg(feature = "wgpu")]
         if this.renderer.draw(scene) {
             this.force_render_pending = true;
         }
         #[cfg(not(feature = "wgpu"))]
         this.renderer.draw(scene);
+        if moved {
+            unsafe {
+                let () = msg_send![class!(CATransaction), commit];
+            }
+            this.renderer
+                .set_presents_with_transaction(presented_with_transaction);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -3190,6 +3222,10 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
             ];
         }
     }
+    lock.backdrops.fit(NSSize::new(
+        size.width.as_f32() as f64,
+        size.height.as_f32() as f64,
+    ));
 
     lock.renderer.update_drawable_size(drawable_size);
 
@@ -3333,7 +3369,7 @@ unsafe extern "C" fn close_window(this: &Objc2Object, _: Sel) {
 unsafe extern "C" fn make_backing_layer(this: &Objc2Object, _: Sel) -> ObjcId {
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer_ptr() as ObjcId
+    window_state.backdrops.container()
 }
 
 unsafe extern "C" fn view_did_change_backing_properties(this: &Objc2Object, _: Sel) {
@@ -3370,6 +3406,7 @@ unsafe extern "C" fn set_frame_size(this: &Objc2Object, _: Sel, size: NSSize) {
 
     let scale_factor = lock.scale_factor();
     let drawable_size = new_size.to_device_pixels(scale_factor);
+    lock.backdrops.fit(size);
     lock.renderer.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
