@@ -2769,6 +2769,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                             let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                                 position,
                                 paths: gpui::ExternalPaths(paths),
+                                operations: gpui::DragOperations::default(),
                             });
 
                             let client = this.get_client();
@@ -2790,7 +2791,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 let position = Point::new(x.into(), y.into());
                 state.drag.position = position;
 
-                let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
+                let input = PlatformInput::FileDrop(FileDropEvent::Pending {
+                    position,
+                    operations: gpui::DragOperations::default(),
+                });
                 drop(state);
                 drag_window.handle_input(input);
             }
@@ -2821,6 +2825,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Submit {
                     position: state.drag.position,
+                    operations: gpui::DragOperations::default(),
                 });
                 drop(state);
                 drag_window.handle_input(input);

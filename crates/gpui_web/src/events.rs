@@ -1491,6 +1491,7 @@ mod tests {
             Some(DispatchEventResult {
                 propagate: false,
                 default_prevented: true,
+                ..Default::default()
             }),
         ));
     }
@@ -1501,6 +1502,7 @@ mod tests {
             Some(DispatchEventResult {
                 propagate: false,
                 default_prevented,
+                ..Default::default()
             })
         };
 

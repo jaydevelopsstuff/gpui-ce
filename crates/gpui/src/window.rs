@@ -2,15 +2,15 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, BackdropFilter, Background, BorderStyle, Bounds,
     BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Filter, FilterBoundary, FontId, Global, GlobalElementId,
-    GlyphId, GlyphRenderMode, GpuSpecs, InputHandler, IntoElement, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, Lerp, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, Motion, MouseButton, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, PaintSurface, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, RasterizedGlyphFormat, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ResolvedDirection,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DragOperations, DropResponse,
+    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Filter, FilterBoundary, FontId,
+    Global, GlobalElementId, GlyphId, GlyphRenderMode, GpuSpecs, InputHandler, IntoElement, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, Lerp,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, Motion, MouseButton,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, PaintSurface, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, RasterizedGlyphFormat, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ResolvedDirection,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledFilter, ScaledPixels,
     Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
     Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
@@ -1341,6 +1341,8 @@ pub struct Window {
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
     default_prevented: bool,
+    external_drag_operations: DragOperations,
+    drop_response: Option<DropResponse>,
     mouse_position: Point<Pixels>,
     pointer_inside_window: bool,
     mouse_hit_test: HitTest,
@@ -2092,6 +2094,8 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
             default_prevented: true,
+            external_drag_operations: DragOperations::default(),
+            drop_response: None,
             mouse_position,
             pointer_inside_window: true,
             mouse_hit_test: HitTest::default(),
@@ -2155,6 +2159,9 @@ impl Window {
 pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
+    /// For a [`FileDropEvent`], the answer a handler gave with
+    /// [`Window::respond_to_external_drag`], if any.
+    pub drop_response: Option<DropResponse>,
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -5977,6 +5984,8 @@ impl Window {
         cx.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
         self.default_prevented = false;
+        // Handlers of a file drop may answer it with `respond_to_external_drag`.
+        self.drop_response = None;
 
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
@@ -6021,8 +6030,13 @@ impl Window {
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
+                FileDropEvent::Entered {
+                    position,
+                    paths,
+                    operations,
+                } => {
                     self.mouse_position = position;
+                    self.external_drag_operations = operations;
                     let source_window = self.handle.window_id();
                     if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
@@ -6039,17 +6053,25 @@ impl Window {
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Pending { position } => {
+                FileDropEvent::Pending {
+                    position,
+                    operations,
+                } => {
                     self.mouse_position = position;
+                    self.external_drag_operations = operations;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Submit { position } => {
+                FileDropEvent::Submit {
+                    position,
+                    operations,
+                } => {
                     cx.activate(true);
                     self.mouse_position = position;
+                    self.external_drag_operations = operations;
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
@@ -6122,7 +6144,21 @@ impl Window {
         DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
+            drop_response: self.drop_response.take(),
         }
+    }
+
+    /// What the source of the drag from outside the window allows, as the
+    /// modifiers held narrow it, as of its last event.
+    pub fn external_drag_operations(&self) -> DragOperations {
+        self.external_drag_operations
+    }
+
+    /// Answers the drag from outside the window being dispatched: what a drop
+    /// where the pointer is would do, or that nothing there takes it. Without
+    /// an answer, the platform's default stands.
+    pub fn respond_to_external_drag(&mut self, response: DropResponse) {
+        self.drop_response = Some(response);
     }
 
     fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
@@ -8618,6 +8654,65 @@ mod tests {
         }
     }
 
+    /// Answers a drag from outside with a copy where its source allows one,
+    /// and refuses it otherwise.
+    struct DropAnsweringView;
+
+    impl Render for DropAnsweringView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(40.))
+                .on_mouse_move(|_, window, _| {
+                    let response = if window.external_drag_operations().copy {
+                        DropResponse::Accept(crate::DragOperation::Copy)
+                    } else {
+                        DropResponse::Refuse
+                    };
+                    window.respond_to_external_drag(response);
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn a_drag_from_outside_is_answered_from_what_its_source_allows(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| DropAnsweringView);
+        window
+            .update(cx, |_, window, cx| {
+                let paths = ExternalPaths([PathBuf::from("/tmp/a")].into_iter().collect());
+                let entered = window.dispatch_event(
+                    FileDropEvent::Entered {
+                        position: point(px(10.), px(10.)),
+                        paths,
+                        operations: DragOperations::ALL,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert_eq!(
+                    entered.drop_response,
+                    Some(DropResponse::Accept(crate::DragOperation::Copy))
+                );
+                let only_moving = DragOperations {
+                    copy: false,
+                    ..DragOperations::ALL
+                };
+                let pending = window.dispatch_event(
+                    FileDropEvent::Pending {
+                        position: point(px(11.), px(10.)),
+                        operations: only_moving,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert_eq!(pending.drop_response, Some(DropResponse::Refuse));
+                assert_eq!(window.external_drag_operations(), only_moving);
+                // Nothing answers an event nothing handles
+                let exited = window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+                assert_eq!(exited.drop_response, None);
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn a_translucent_elements_backdrop_is_painted_outside_its_group(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, _| FadingBackdropView);
@@ -9225,6 +9320,7 @@ mod tests {
                 FileDropEvent::Entered {
                     position: reentry_position,
                     paths: external_paths(),
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,
@@ -9247,6 +9343,7 @@ mod tests {
                 FileDropEvent::Entered {
                     position: reentry_position,
                     paths: external_paths(),
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,
@@ -9268,6 +9365,7 @@ mod tests {
                 FileDropEvent::Entered {
                     position: reentry_position,
                     paths: external_paths(),
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,
@@ -9281,6 +9379,7 @@ mod tests {
             window.dispatch_event(
                 FileDropEvent::Submit {
                     position: reentry_position,
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,
@@ -9300,6 +9399,7 @@ mod tests {
                 FileDropEvent::Entered {
                     position: reentry_position,
                     paths: external_paths(),
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,
@@ -9334,6 +9434,7 @@ mod tests {
                 FileDropEvent::Entered {
                     position: reentry_position,
                     paths: ExternalPaths([cancelled_path].into_iter().collect()),
+                    operations: DragOperations::default(),
                 }
                 .to_platform_input(),
                 cx,

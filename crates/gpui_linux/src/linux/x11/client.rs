@@ -862,7 +862,10 @@ impl X11Client {
                     let position = state.xdnd_state.position;
                     drop(state);
                     window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
+                        position,
+                        operations: gpui::DragOperations::default(),
+                    }));
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
@@ -896,7 +899,10 @@ impl X11Client {
                     let position = state.xdnd_state.position;
                     drop(state);
                     window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
+                        position,
+                        operations: gpui::DragOperations::default(),
+                    }));
                 } else if event.type_ == state.atoms.XdndDrop {
                     xdnd_send_finished(
                         &state.xcb_connection,
@@ -907,7 +913,10 @@ impl X11Client {
                     let position = state.xdnd_state.position;
                     drop(state);
                     window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                        position,
+                        operations: gpui::DragOperations::default(),
+                    }));
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 }
             }
@@ -944,6 +953,7 @@ impl X11Client {
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
                         paths: gpui::ExternalPaths(paths),
+                        operations: gpui::DragOperations::default(),
                     });
                     drop(state);
                     window.handle_input(input);

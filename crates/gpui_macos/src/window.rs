@@ -10,13 +10,14 @@ use anyhow::Result;
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
 use gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, DispatchEventResult,
+    DragOperation, DragOperations, DropResponse, ExternalDragPayload, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
+    px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -317,6 +318,10 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+const NSDragOperationLink: NSDragOperation = 2;
+#[allow(non_upper_case_globals)]
+const NSDragOperationGeneric: NSDragOperation = 4;
 #[allow(non_upper_case_globals)]
 const NSDragOperationMove: NSDragOperation = 16;
 const NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION: NSInteger = 0;
@@ -3747,6 +3752,36 @@ fn is_drag_from_this_window(this: &Objc2Object, dragging_info: ObjcId) -> bool {
     std::ptr::eq(source as *const Objc2Object, this as *const Objc2Object)
 }
 
+/// What the drag's source allows, as the modifiers held narrow it.
+fn drag_operations(dragging_info: ObjcId) -> DragOperations {
+    let mask: NSDragOperation = unsafe { msg_send![dragging_info, draggingSourceOperationMask] };
+    DragOperations {
+        copy: mask & NSDragOperationCopy != 0,
+        r#move: mask & NSDragOperationMove != 0,
+        link: mask & NSDragOperationLink != 0,
+        generic: mask & NSDragOperationGeneric != 0,
+    }
+}
+
+/// The operation to tell AppKit for a drag over the window: the app's answer,
+/// or without one, a move for a drag from this window and a copy for others.
+fn drag_operation(result: Option<DispatchEventResult>, is_source_window: bool) -> NSDragOperation {
+    let Some(result) = result else {
+        return NSDragOperationNone;
+    };
+    match result.drop_response {
+        Some(DropResponse::Accept(operation)) => match operation {
+            DragOperation::Copy => NSDragOperationCopy,
+            DragOperation::Move => NSDragOperationMove,
+            DragOperation::Link => NSDragOperationLink,
+            DragOperation::Generic => NSDragOperationGeneric,
+        },
+        Some(DropResponse::Refuse) => NSDragOperationNone,
+        None if is_source_window => NSDragOperationMove,
+        None => NSDragOperationCopy,
+    }
+}
+
 unsafe extern "C" fn dragging_entered(
     this: &Objc2Object,
     _: Sel,
@@ -3755,16 +3790,19 @@ unsafe extern "C" fn dragging_entered(
     let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    let paths = external_paths_from_event(dragging_info);
-    if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
-        && send_file_drop_event(window_state, event)
-    {
-        if is_source_window {
-            return NSDragOperationMove;
-        }
-        return NSDragOperationCopy;
-    }
-    NSDragOperationNone
+    let operations = drag_operations(dragging_info);
+    let Some(paths) = external_paths_from_event(dragging_info) else {
+        return NSDragOperationNone;
+    };
+    let result = send_file_drop_event(
+        window_state,
+        FileDropEvent::Entered {
+            position,
+            paths,
+            operations,
+        },
+    );
+    drag_operation(result, is_source_window)
 }
 
 unsafe extern "C" fn dragging_updated(
@@ -3775,15 +3813,15 @@ unsafe extern "C" fn dragging_updated(
     let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
-        if is_source_window {
-            NSDragOperationMove
-        } else {
-            NSDragOperationCopy
-        }
-    } else {
-        NSDragOperationNone
-    }
+    let operations = drag_operations(dragging_info);
+    let result = send_file_drop_event(
+        window_state,
+        FileDropEvent::Pending {
+            position,
+            operations,
+        },
+    );
+    drag_operation(result, is_source_window)
 }
 
 unsafe extern "C" fn dragging_exited(this: &Objc2Object, _: Sel, _: ObjcId) {
@@ -3798,10 +3836,16 @@ unsafe extern "C" fn perform_drag_operation(
 ) -> Bool {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    Bool::new(send_file_drop_event(
+    let operations = drag_operations(dragging_info);
+    let result = send_file_drop_event(
         window_state,
-        FileDropEvent::Submit { position },
-    ))
+        FileDropEvent::Submit {
+            position,
+            operations,
+        },
+    );
+    // A drop refused goes back to where it came from
+    Bool::new(result.is_some_and(|result| result.drop_response != Some(DropResponse::Refuse)))
 }
 
 fn external_paths_from_event(dragging_info: *mut Objc2Object) -> Option<ExternalPaths> {
@@ -3891,11 +3935,12 @@ async fn synthetic_drag(
 }
 
 /// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
-/// state and updates the window state according to the event passed.
+/// state and updates the window state according to the event passed. None when the
+/// window has no callback to take it.
 fn send_file_drop_event(
     window_state: Arc<Mutex<MacWindowState>>,
     file_drop_event: FileDropEvent,
-) -> bool {
+) -> Option<DispatchEventResult> {
     let external_files_dragged = match file_drop_event {
         FileDropEvent::Entered { .. } => Some(true),
         FileDropEvent::Exited | FileDropEvent::Ended => Some(false),
@@ -3905,15 +3950,15 @@ fn send_file_drop_event(
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
-        callback(PlatformInput::FileDrop(file_drop_event));
+        let result = callback(PlatformInput::FileDrop(file_drop_event));
         let mut lock = window_state.lock();
         lock.event_callback = Some(callback);
         if let Some(external_files_dragged) = external_files_dragged {
             lock.external_files_dragged = external_files_dragged;
         }
-        true
+        Some(result)
     } else {
-        false
+        None
     }
 }
 

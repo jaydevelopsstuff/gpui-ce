@@ -732,6 +732,70 @@ impl Render for ExternalPaths {
     }
 }
 
+/// What a drag can end in: an operation its source allows, and the one a drop
+/// is answered with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DragOperation {
+    /// The files are copied.
+    Copy,
+    /// The files are moved.
+    Move,
+    /// The files are linked to.
+    Link,
+    /// The destination decides what's done (on macOS, what ⌘ asks for).
+    Generic,
+}
+
+/// The operations a drag's source allows, narrowed to what the modifier keys
+/// held ask for (on macOS, ⌥ to copying, ⌘ to generic, ⌃ to linking).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DragOperations {
+    /// Copying is allowed.
+    pub copy: bool,
+    /// Moving is allowed.
+    pub r#move: bool,
+    /// Linking is allowed.
+    pub link: bool,
+    /// Leaving it to the destination is allowed.
+    pub generic: bool,
+}
+
+impl DragOperations {
+    /// Every operation, for a platform that doesn't say.
+    pub const ALL: Self = Self {
+        copy: true,
+        r#move: true,
+        link: true,
+        generic: true,
+    };
+
+    /// Whether `operation` is allowed.
+    pub fn contains(self, operation: DragOperation) -> bool {
+        match operation {
+            DragOperation::Copy => self.copy,
+            DragOperation::Move => self.r#move,
+            DragOperation::Link => self.link,
+            DragOperation::Generic => self.generic,
+        }
+    }
+}
+
+impl Default for DragOperations {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+/// How a window answers a drag from outside it over where the pointer is: the
+/// platform shows it (macOS's cursor badge) and ends the drag with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropResponse {
+    /// A drop here would do `operation`.
+    Accept(DragOperation),
+    /// Nothing here takes the drag: dropped, it goes back.
+    Refuse,
+}
+
 /// A file drop event from the platform, generated when files are dragged and dropped onto the window.
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {
@@ -741,16 +805,22 @@ pub enum FileDropEvent {
         position: Point<Pixels>,
         /// The paths of the files that are being dragged.
         paths: ExternalPaths,
+        /// What the drag's source allows.
+        operations: DragOperations,
     },
     /// The files are being dragged over the window
     Pending {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// What the drag's source allows, as the modifiers held now narrow it.
+        operations: DragOperations,
     },
     /// The files have been dropped onto the window.
     Submit {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// What the drag's source allows, as the modifiers held narrowed it.
+        operations: DragOperations,
     },
     /// The user has stopped dragging the files over the window.
     Exited,
