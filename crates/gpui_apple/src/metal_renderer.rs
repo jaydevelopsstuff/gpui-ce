@@ -2984,6 +2984,72 @@ mod tests {
     }
 
     #[test]
+    fn a_faded_backdrop_blur_replaces_translucent_content_by_its_opacity() {
+        let mut renderer = MetalHeadlessRenderer::new();
+        renderer.renderer.update_transparency(true);
+        let full = Bounds {
+            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size: Size {
+                width: ScaledPixels(16.0),
+                height: ScaledPixels(16.0),
+            },
+        };
+        let box_bounds = Bounds {
+            origin: gpui::point(ScaledPixels(4.0), ScaledPixels(4.0)),
+            size: Size {
+                width: ScaledPixels(8.0),
+                height: ScaledPixels(8.0),
+            },
+        };
+        let mut filter = Scene::default();
+        filter.insert_primitive(Quad {
+            bounds: full,
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            background: checkerboard(hsla(0.2, 0.7, 0.5, 0.5), 2.0),
+            ..Default::default()
+        });
+        filter.insert_primitive(BackdropFilter {
+            bounds: box_bounds,
+            content_mask: ContentMask {
+                bounds: full,
+                ..Default::default()
+            },
+            filters: smallvec::smallvec![ScaledFilter::Blur(ScaledPixels(8.0))],
+            opacity: 0.5,
+            ..Default::default()
+        });
+        filter.finish();
+        let Some(image) = render_for_contracts(
+            &mut renderer,
+            &filter,
+            Size {
+                width: DevicePixels(16),
+                height: DevicePixels(16),
+            },
+        ) else {
+            return;
+        };
+        let difference = |a: [u8; 4], b: [u8; 4]| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0)
+        };
+        // Half faded in, the sharp squares show through at half their contrast: the
+        // content and its blur mixed, as CSS fades an element with a backdrop-filter
+        let sharp = u32::from(difference(pixel(&image, 2, 0), pixel(&image, 0, 0)));
+        let mixed = u32::from(difference(pixel(&image, 7, 8), pixel(&image, 8, 8)));
+        assert!(
+            mixed * 4 > sharp && mixed * 4 < sharp * 3,
+            "half the contrast: {mixed} of {sharp}",
+        );
+    }
+
+    #[test]
     fn backdrop_blur_keeps_uniform_translucent_content() {
         let mut renderer = MetalHeadlessRenderer::new();
         renderer.renderer.update_transparency(true);
