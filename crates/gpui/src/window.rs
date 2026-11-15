@@ -2894,6 +2894,20 @@ impl Window {
         self.platform_window.start_window_move()
     }
 
+    /// A drag session the app started from this window itself, outside
+    /// gpui's drags (to give it items or an image gpui's can't), now has the
+    /// mouse, until [`Self::end_app_drag_session`]. The session takes the
+    /// button's release, so without this gpui would go on repeating the held
+    /// button's last move (macOS).
+    pub fn begin_app_drag_session(&self) {
+        self.platform_window.begin_app_drag_session()
+    }
+
+    /// The drag session the app started ended: the button is up.
+    pub fn end_app_drag_session(&self) {
+        self.platform_window.end_app_drag_session()
+    }
+
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);

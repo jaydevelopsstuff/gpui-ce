@@ -854,6 +854,9 @@ struct MacWindowState {
     /// which mustn't insert its characters.
     interpreting_commands_only: bool,
     external_files_dragged: bool,
+    /// While a drag session the app started itself has the mouse, which
+    /// takes the button's release
+    app_drag_session: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     // When true, the whole content view is reported as app-owned titlebar content via
@@ -1300,6 +1303,7 @@ impl MacWindow {
                 do_command_handled: None,
                 interpreting_commands_only: false,
                 external_files_dragged: false,
+                app_drag_session: false,
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -2324,6 +2328,21 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn begin_app_drag_session(&self) {
+        let mut lock = self.0.lock();
+        lock.app_drag_session = true;
+        // Ends the held button's repeating, which the move starting the
+        // session set going
+        lock.synthetic_drag_counter += 1;
+    }
+
+    fn end_app_drag_session(&self) {
+        let mut lock = self.0.lock();
+        lock.app_drag_session = false;
+        lock.synthetic_drag_counter += 1;
+        lock.last_left_mouse_down_event = None;
+    }
+
     fn can_start_external_drag(&self) -> bool {
         true
     }
@@ -3081,7 +3100,7 @@ unsafe extern "C" fn handle_view_event(this: &Objc2Object, _: Sel, native_event:
                 // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
                 // External file drag and drop is able to emit its own synthetic mouse events which will conflict
                 // with these ones.
-                if !lock.external_files_dragged {
+                if !lock.external_files_dragged && !lock.app_drag_session {
                     lock.synthetic_drag_counter += 1;
                     let executor = lock.foreground_executor.clone();
                     executor
