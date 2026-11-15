@@ -26,7 +26,10 @@ const SHIFT_TAB_KEY: u32 = 0x19;
 pub fn key_to_native(key: &str) -> Cow<'_, str> {
     let code = match key {
         "space" => SPACE_KEY,
-        "backspace" => BACKSPACE_KEY,
+        // A menu item's key equivalent names the Delete key by
+        // NSBackspaceCharacter: AppKit matches the item to the key it names,
+        // and the Delete key types 0x7f, which names Forward Delete
+        "backspace" => NSBackspaceCharacter,
         "escape" => ESCAPE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
