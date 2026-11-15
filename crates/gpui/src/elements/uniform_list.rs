@@ -472,7 +472,11 @@ impl Element for UniformList {
 
                     let first_visible_element_ix =
                         (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
-                    let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
+                    // Items scroll through the bottom padding as through the
+                    // top's, so one there is drawn too
+                    let last_visible_element_ix = ((-scroll_offset.y
+                        + padded_bounds.size.height
+                        + padding.bottom)
                         / item_height)
                         .ceil() as usize;
 
