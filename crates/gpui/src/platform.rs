@@ -1006,6 +1006,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn begin_app_drag_session(&self) {}
     fn end_app_drag_session(&self) {}
+    fn accept_drag_types(&self, _types: &[SharedString]) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn set_exclusive_zone(&self, _zone: Pixels) {}
     #[cfg(all(target_os = "linux", feature = "wayland"))]

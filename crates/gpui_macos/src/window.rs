@@ -45,7 +45,7 @@ use objc2_app_kit::{
     NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSInteger, NSNotFound, NSOperatingSystemVersion, NSPoint as Objc2NSPoint, NSRange,
+    NSArray, NSInteger, NSNotFound, NSOperatingSystemVersion, NSPoint as Objc2NSPoint, NSRange,
     NSRangePointer, NSRect as Objc2NSRect, NSSize, NSString, NSUInteger,
 };
 use parking_lot::Mutex;
@@ -857,6 +857,8 @@ struct MacWindowState {
     /// While a drag session the app started itself has the mouse, which
     /// takes the button's release
     app_drag_session: bool,
+    /// The pasteboard types taken besides file names (`accept_drag_types`)
+    drag_types: Vec<Retained<NSString>>,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     // When true, the whole content view is reported as app-owned titlebar content via
@@ -1304,6 +1306,7 @@ impl MacWindow {
                 interpreting_commands_only: false,
                 external_files_dragged: false,
                 app_drag_session: false,
+                drag_types: Vec::new(),
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -2341,6 +2344,19 @@ impl PlatformWindow for MacWindow {
         lock.app_drag_session = false;
         lock.synthetic_drag_counter += 1;
         lock.last_left_mouse_down_event = None;
+    }
+
+    fn accept_drag_types(&self, types: &[SharedString]) {
+        let mut lock = self.0.lock();
+        lock.drag_types = types.iter().map(|kind| ns_string(kind)).collect();
+        let mut registered = vec![filenames_pboard_type()];
+        registered.extend(lock.drag_types.iter().cloned());
+        let registered = NSArray::from_retained_slice(&registered);
+        let native_window = lock.native_window;
+        drop(lock);
+        unsafe {
+            let () = msg_send![native_window, registerForDraggedTypes: &*registered];
+        }
     }
 
     fn can_start_external_drag(&self) -> bool {
@@ -3810,7 +3826,8 @@ unsafe extern "C" fn dragging_entered(
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let operations = drag_operations(dragging_info);
-    let Some(paths) = external_paths_from_event(dragging_info) else {
+    let drag_types = window_state.as_ref().lock().drag_types.clone();
+    let Some(paths) = external_paths_from_event(dragging_info, &drag_types) else {
         return NSDragOperationNone;
     };
     let result = send_file_drop_event(
@@ -3867,13 +3884,23 @@ unsafe extern "C" fn perform_drag_operation(
     Bool::new(result.is_some_and(|result| result.drop_response != Some(DropResponse::Refuse)))
 }
 
-fn external_paths_from_event(dragging_info: *mut Objc2Object) -> Option<ExternalPaths> {
+/// The file names a drag carries, or none for one carrying only a type the
+/// window was asked to take (`accept_drag_types`).
+fn external_paths_from_event(
+    dragging_info: *mut Objc2Object,
+    drag_types: &[Retained<NSString>],
+) -> Option<ExternalPaths> {
     let mut paths = SmallVec::new();
     let pasteboard: ObjcId = unsafe { msg_send![dragging_info, draggingPasteboard] };
     let filenames_type = filenames_pboard_type();
     let filenames: ObjcId = unsafe { msg_send![pasteboard, propertyListForType: &*filenames_type] };
     if filenames == NIL {
-        return None;
+        if drag_types.is_empty() {
+            return None;
+        }
+        let types = NSArray::from_retained_slice(drag_types);
+        let available: ObjcId = unsafe { msg_send![pasteboard, availableTypeFromArray: &*types] };
+        return (available != NIL).then(|| ExternalPaths(SmallVec::new()));
     }
     let count: NSUInteger = unsafe { msg_send![filenames, count] };
     for index in 0..count {

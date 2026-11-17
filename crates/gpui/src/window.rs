@@ -2908,6 +2908,15 @@ impl Window {
         self.platform_window.end_app_drag_session()
     }
 
+    /// Takes drags carrying any of these pasteboard types as well as file
+    /// names (macOS). One with such a type but no file names arrives as a
+    /// [`FileDropEvent`] with no paths, for the app to read what it means
+    /// from the drag itself: a drag of file promises the app started, for
+    /// one, whose files don't exist yet.
+    pub fn accept_drag_types(&self, types: &[SharedString]) {
+        self.platform_window.accept_drag_types(types)
+    }
+
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);
