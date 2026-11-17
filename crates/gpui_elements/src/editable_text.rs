@@ -157,7 +157,6 @@
 //! - text sanitation & validation (see no-op implementation of [`EditableTextState::validate_incoming_text`])
 //! - nav & select via PageUp/PageDown
 //! - screen reader support via a11y
-//! - masking text (e.g. for passwords)
 //! - disabling `insert_tab` if favor of tab being used to change focus between elements (i.e. escaping the field)
 //!
 
@@ -166,6 +165,7 @@ mod caret;
 mod element;
 mod history;
 mod layout;
+mod mask;
 mod state;
 mod storage;
 

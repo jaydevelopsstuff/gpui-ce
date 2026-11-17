@@ -1,11 +1,15 @@
 use crate::editable_text::{
-    StringStorage, TextBoundary, UnicodeTextStorage, actions::EditableTextActionHandler,
-    caret::CaretNotify, history::EditableTextHistory, layout::EditableTextLayoutResult,
+    StringStorage, TextBoundary, UnicodeTextStorage,
+    actions::EditableTextActionHandler,
+    caret::CaretNotify,
+    history::EditableTextHistory,
+    layout::EditableTextLayoutResult,
+    mask::{DocumentView, masked_text},
 };
 use gpui::{
     App, Bounds, CaretAffinity, CaretPosition, CaretSelection, CaretSelectionMovement,
     ClipboardItem, Context, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, NavigationDirection, Pixels, Point, ShapedText, Subscription,
+    Focusable, NavigationDirection, Pixels, Point, SharedString, Subscription,
     TextDirection as Direction, TextMovement, TextRangeExt, TextSelectionKind, UTF16Selection,
     Window, point, utf16_to_utf8_offset,
 };
@@ -78,6 +82,9 @@ pub struct EditableTextState {
     blur_subscription: Option<Subscription>,
     history: Option<EditableTextHistory>,
     accessibility_text_metrics: AccessibilityTextMetrics,
+    /// Each character is laid out as a bullet, as in a password field, and
+    /// none can be copied or cut out
+    masked: bool,
 
     pub(super) layout_data: EditableTextLayoutResult,
 }
@@ -173,6 +180,7 @@ impl EditableTextState {
             // TODO: what is the best way to give users access to configure this via element
             history: Some(EditableTextHistory::default()),
             accessibility_text_metrics,
+            masked: false,
 
             layout_data: EditableTextLayoutResult::default(),
         }
@@ -185,6 +193,39 @@ impl EditableTextState {
 
     pub fn version(&self) -> u16 {
         self.storage.version()
+    }
+
+    /// Shows each character as a bullet, as a password field does, and keeps
+    /// the text from being copied or cut out of the field.
+    pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
+        if self.masked != masked {
+            self.masked = masked;
+            // Laid out again, whatever the storage's version
+            self.layout_data.state.size = None;
+            cx.notify();
+        }
+    }
+
+    pub fn is_masked(&self) -> bool {
+        self.masked
+    }
+
+    /// The text as laid out: the stored text, or its mask.
+    pub(super) fn layout_text(&self) -> SharedString {
+        if self.masked {
+            masked_text(self.as_str())
+        } else {
+            SharedString::from(self.as_str())
+        }
+    }
+
+    /// The last layout, whatever version of the text it was made for, in the
+    /// storage's offsets.
+    pub(super) fn document_view(&self) -> Option<DocumentView<'_>> {
+        self.layout_data
+            .document
+            .as_ref()
+            .map(|document| DocumentView::new(document, self.masked.then(|| self.as_str())))
     }
 
     /// Replaces the contents of the stored text with the provided string slice.
@@ -373,15 +414,13 @@ impl EditableTextState {
 
 // Screen space (text layout engine output) & String space transformers
 impl EditableTextState {
-    fn current_document(&self) -> Result<&ShapedText, OldDocumentVersion> {
+    fn current_document(&self) -> Result<DocumentView<'_>, OldDocumentVersion> {
         if self.layout_data.state.last_seen_storage_version != self.storage.version() {
             return Err(OldDocumentVersion);
         }
 
         Ok(self
-            .layout_data
-            .document
-            .as_deref()
+            .document_view()
             .expect("editable text layout invariant violated: current version has no document"))
     }
 
@@ -1096,10 +1135,10 @@ impl EntityInputHandler for EditableTextState {
         // frame lays the new text out: answer from the last layout, where the
         // range starts at about the same place, rather than with no bounds
         // (which puts the candidate window in a corner of the screen)
-        let document = self.layout_data.document.as_deref()?;
+        let document = self.document_view()?;
         let document_origin = bounds.origin + self.layout_data.document_offset
             - self.layout_data.scroll_bounds.origin;
-        let boundary = |index: usize| document.text.floor_char_boundary(index);
+        let boundary = |index: usize| document.floor_char_boundary(index);
         let start = boundary(range.start);
         let end = boundary(range.end);
 
@@ -1355,7 +1394,7 @@ impl<'app> EditableTextActionHandler<Context<'app, Self>> for EditableTextState 
     }
 
     fn cut(&mut self, _: &Cut, _w: &mut Window, cx: &mut Context<'app, Self>) {
-        if !self.layout_data.accepts_input {
+        if !self.layout_data.accepts_input || self.masked {
             return;
         }
 
@@ -1375,6 +1414,10 @@ impl<'app> EditableTextActionHandler<Context<'app, Self>> for EditableTextState 
     }
 
     fn copy(&mut self, _: &Copy, _w: &mut Window, cx: &mut Context<'app, Self>) {
+        if self.masked {
+            return;
+        }
+
         let range = self.selected_byte_range();
 
         if range.is_empty() {
@@ -1489,8 +1532,8 @@ mod tests {
     use super::*;
     use crate::editable_text::StringStorage;
     use gpui::{
-        AppContext, Entity, IntoElement, PlatformTextSystem, Render, TestAppContext, TextRun,
-        TextSystem, WindowHandle, WindowTextSystem, div, font, px,
+        AppContext, Entity, IntoElement, PlatformTextSystem, Render, ShapedText, TestAppContext,
+        TextRun, TextSystem, WindowHandle, WindowTextSystem, div, font, px,
     };
     use gpui_parley::{ParleyTextSystem, SystemFonts};
     use gpui_render::SwashGlyphRasterizer;

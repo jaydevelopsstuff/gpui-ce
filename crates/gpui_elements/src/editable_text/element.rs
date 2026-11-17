@@ -319,7 +319,7 @@ impl Element for EditableTextElement {
         let (prelayout, next_scroll_offset, direction_text) = {
             let state = entity.read(cx);
             let show_placeholder = state.as_str().is_empty();
-            let direction_text = SharedString::from(state.as_str());
+            let direction_text = state.layout_text();
             let text = match show_placeholder {
                 false => Some(direction_text.clone()),
                 true => self.placeholder.clone(),
@@ -459,8 +459,18 @@ impl Element for EditableTextElement {
             let metrics = state.accessibility_text_metrics();
             let (anchor, focus) = metrics.character_indices_for_selection(state.caret_selection());
             let mut text_run = accesskit::Node::new(accesskit::Role::TextRun);
-            text_run.set_value(state.as_str());
-            text_run.set_character_lengths(metrics.character_lengths.clone());
+            if state.is_masked() {
+                // The bullets, one for each character, as they're shown
+                let masked = state.layout_text();
+                text_run.set_character_lengths(vec![
+                    super::mask::MASK.len_utf8() as u8;
+                    metrics.character_lengths.len()
+                ]);
+                text_run.set_value(masked.as_ref());
+            } else {
+                text_run.set_value(state.as_str());
+                text_run.set_character_lengths(metrics.character_lengths.clone());
+            }
 
             AccessibilityPrepaint {
                 text_run,
@@ -812,7 +822,7 @@ impl PrepaintElements {
         window: &mut Window,
     ) -> PrepaintElements {
         let mut elements = PrepaintElements::default();
-        let Some(document) = &state.layout_data.document else {
+        let Some(document) = state.document_view() else {
             return elements;
         };
 
@@ -826,8 +836,8 @@ impl PrepaintElements {
 
         let document_origin = prepaint.document_origin();
         let quads = |range: Range<usize>, color, offset_y| {
-            let start = range.start.min(document.text.len());
-            let end = range.end.min(document.text.len());
+            let start = range.start.min(document.len());
+            let end = range.end.min(document.len());
 
             document
                 .selection_bounds(start..end, line_height)
@@ -841,7 +851,7 @@ impl PrepaintElements {
                 })
         };
 
-        elements.document = Some(document.clone());
+        elements.document = Some(document.shaped().clone());
 
         elements.selection.extend(quads(
             state.selected_byte_range(),
@@ -1608,6 +1618,62 @@ mod tests {
             assert_eq!(state.as_str(), "hello big ");
             assert_eq!(state.selected_byte_range(), 0..10);
         });
+    }
+
+    #[test]
+    fn a_masked_input_lays_out_a_bullet_for_each_character() {
+        // Characters of one, two and three bytes
+        let mut fixture = BidiInputFixture::new("pä€s", 8.0, 300.0, false, 1.0);
+        fixture.cx.update(|cx| {
+            cx.bind_keys(default_bindings().as_keybindings(Some(DEFAULT_INPUT_CONTEXT)));
+        });
+        fixture.update_input(|input, cx| input.set_masked(true, cx));
+        assert_eq!(fixture.document().text.as_ref(), "••••");
+        let caret = |fixture: &mut BidiInputFixture| {
+            fixture
+                .cx
+                .update(|cx| fixture.input.read(cx).caret_selection().caret.index)
+        };
+
+        // A click before the third bullet puts the caret before the third
+        // character
+        let position = fixture.point(2 * super::super::mask::MASK.len_utf8());
+        fixture.down(position);
+        fixture.dispatch(PlatformInput::MouseUp(MouseUpEvent {
+            position,
+            button: MouseButton::Left,
+            click_count: 1,
+            ..Default::default()
+        }));
+        assert_eq!(caret(&mut fixture), "pä".len());
+
+        // The arrows move a character at a time
+        fixture.key_down("right");
+        assert_eq!(caret(&mut fixture), "pä€".len());
+        fixture.key_down("left");
+        fixture.key_down("left");
+        assert_eq!(caret(&mut fixture), "p".len());
+
+        // Backspace takes the character before the caret
+        fixture.update_input(|input, cx| input.move_to("pä€s".len(), cx));
+        fixture.key_down("backspace");
+        fixture
+            .cx
+            .update(|cx| assert_eq!(fixture.input.read(cx).as_str(), "pä€"));
+        assert_eq!(fixture.document().text.as_ref(), "•••");
+
+        // Selected, it can't be copied or cut out
+        fixture.update_input(|input, cx| input.select_document(cx));
+        fixture.key_down("cmd-c");
+        fixture.key_down("cmd-x");
+        fixture.cx.update(|cx| {
+            assert!(cx.read_from_clipboard().is_none());
+            assert_eq!(fixture.input.read(cx).as_str(), "pä€");
+        });
+
+        // Unmasked, it's laid out as it is
+        fixture.update_input(|input, cx| input.set_masked(false, cx));
+        assert_eq!(fixture.document().text.as_ref(), "pä€");
     }
 
     #[test]
