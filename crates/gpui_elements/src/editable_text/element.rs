@@ -416,6 +416,8 @@ impl Element for EditableTextElement {
             .caret
             .update(cx, |caret, cx| caret.update_focus(is_focused, cx));
         window.set_focus_handle(&focus_handle, cx);
+        // Focused, it's the field assistive technology follows
+        Interactivity::report_a11y_focus(global_id, &focus_handle, window);
 
         let prepaint = self.interactivity.prepaint(
             global_id,
@@ -1683,6 +1685,50 @@ mod tests {
 
         fixture.update_input(|input, cx| input.set_masked(false, cx));
         assert!(!masked(&mut fixture));
+    }
+
+    #[test]
+    fn a_focused_input_is_the_focus_of_assistive_technology() {
+        let mut fixture = BidiInputFixture::new("server", 8.0, 300.0, false, 1.0);
+        let focused_role = |fixture: &mut BidiInputFixture| {
+            fixture
+                .cx
+                .update_window(fixture.window.into(), |_, window, _| {
+                    window.a11y_tree().and_then(|tree| {
+                        tree.nodes
+                            .iter()
+                            .find(|(id, _)| *id == tree.focus)
+                            .map(|(_, node)| node.role())
+                    })
+                })
+                .unwrap()
+        };
+        fixture
+            .cx
+            .update_window(fixture.window.into(), |_, window, _| {
+                window.set_a11y_forced(true)
+            })
+            .unwrap();
+        fixture.cx.run_until_parked();
+        // The fixture's field takes several lines
+        assert_ne!(
+            focused_role(&mut fixture),
+            Some(accesskit::Role::MultilineTextInput)
+        );
+
+        let input = fixture.input.clone();
+        fixture
+            .cx
+            .update_window(fixture.window.into(), |_, window, cx| {
+                let focus = input.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            })
+            .unwrap();
+        fixture.cx.run_until_parked();
+        assert_eq!(
+            focused_role(&mut fixture),
+            Some(accesskit::Role::MultilineTextInput)
+        );
     }
 
     #[test]

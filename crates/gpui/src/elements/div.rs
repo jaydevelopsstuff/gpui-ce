@@ -2991,6 +2991,35 @@ impl Interactivity {
         )
     }
 
+    /// Registers `focus_handle` as the focus of the element `global_id`
+    /// names for assistive technology, and reports the element focused
+    /// while its handle is. [`Self::prepaint`] does this for a tracked focus
+    /// handle; elements of other crates that keep their own (a text field)
+    /// call it from their prepaint.
+    pub fn report_a11y_focus(
+        global_id: Option<&GlobalElementId>,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+    ) {
+        if !window.a11y.is_active() {
+            return;
+        }
+        if let Some(global_id) = global_id {
+            let node_id = global_id.accesskit_node_id();
+            window.a11y.set_focusable(node_id, focus_handle.id);
+            if focus_handle.is_focused(window) {
+                window.a11y.set_focus(node_id);
+            }
+        } else if focus_handle.is_focused(window) {
+            // Focusable, but with no element id it can't have an
+            // accessibility node, so screen readers fall back to the
+            // whole window.
+            window
+                .a11y
+                .note_focus_without_node(focus_handle.id, "it has no element id");
+        }
+    }
+
     /// Commit the bounds of this element according to this interactivity state's configured styles.
     pub fn prepaint<R>(
         &mut self,
@@ -3028,23 +3057,7 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
-
-            if window.a11y.is_active() {
-                if let Some(global_id) = global_id {
-                    let node_id = global_id.accesskit_node_id();
-                    window.a11y.set_focusable(node_id, focus_handle.id);
-                    if focus_handle.is_focused(window) {
-                        window.a11y.set_focus(node_id);
-                    }
-                } else if focus_handle.is_focused(window) {
-                    // Focusable, but with no element id it can't have an
-                    // accessibility node, so screen readers fall back to the
-                    // whole window.
-                    window
-                        .a11y
-                        .note_focus_without_node(focus_handle.id, "it has no element id");
-                }
-            }
+            Self::report_a11y_focus(global_id, focus_handle, window);
         }
 
         if self.report_active_descendant_focus && window.a11y.is_active() {
