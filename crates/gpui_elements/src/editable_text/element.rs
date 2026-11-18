@@ -32,6 +32,7 @@ pub fn editable_text(id: impl Into<ElementId>) -> EditableTextElement {
         caret_blink_interval: None,
         caret_width: px(2.),
         caret_height: relative(1.).into(),
+        masked: false,
     };
     this.interactivity.element_id = Some(id.into());
 
@@ -90,6 +91,9 @@ pub struct EditableTextElement {
     /// `relative(1.)`, which makes the caret as tall as the line.
     #[setters(generate, rename = "caret_h", into)]
     caret_height: DefiniteLength,
+    /// Whether the state was masked when last laid out, so that assistive
+    /// technology is told it's a password field.
+    masked: bool,
 }
 
 /// EditableText styling that goes beyond what Style/StyleRefinement supports
@@ -259,7 +263,9 @@ impl Element for EditableTextElement {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
-        Some(if self.supports_multiline {
+        Some(if self.masked {
+            accesskit::Role::PasswordInput
+        } else if self.supports_multiline {
             accesskit::Role::MultilineTextInput
         } else {
             accesskit::Role::TextInput
@@ -267,6 +273,11 @@ impl Element for EditableTextElement {
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        // Its label, description and states, as a div's
+        self.interactivity.write_a11y_info(node);
+        if let Some(placeholder) = self.placeholder.as_ref().filter(|text| !text.is_empty()) {
+            node.set_placeholder(placeholder.to_string());
+        }
         if !self.accepts_input {
             node.set_read_only();
         }
@@ -318,6 +329,7 @@ impl Element for EditableTextElement {
         // Block-wrapped so that the state being read is dropped before continuing.
         let (prelayout, next_scroll_offset, direction_text) = {
             let state = entity.read(cx);
+            self.masked = state.is_masked();
             let show_placeholder = state.as_str().is_empty();
             let direction_text = state.layout_text();
             let text = match show_placeholder {
@@ -1618,6 +1630,59 @@ mod tests {
             assert_eq!(state.as_str(), "hello big ");
             assert_eq!(state.selected_byte_range(), 0..10);
         });
+    }
+
+    #[test]
+    fn its_label_and_placeholder_reach_assistive_technology() {
+        let field = text_input("server")
+            .placeholder("smb://server")
+            .aria_label("Server Address")
+            .aria_description("Where to connect");
+        assert_eq!(field.a11y_role(), Some(accesskit::Role::TextInput));
+        let mut node = accesskit::Node::new(accesskit::Role::TextInput);
+        field.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some("Server Address"));
+        assert_eq!(node.description(), Some("Where to connect"));
+        assert_eq!(node.placeholder(), Some("smb://server"));
+        assert!(!node.is_read_only());
+
+        let mut node = accesskit::Node::new(accesskit::Role::TextInput);
+        text_input("readonly")
+            .accepts_input(false)
+            .write_a11y_info(&mut node);
+        assert!(node.is_read_only());
+    }
+
+    #[test]
+    fn a_masked_input_is_a_password_field() {
+        let mut fixture = BidiInputFixture::new("secret", 8.0, 300.0, false, 1.0);
+        fixture.update_input(|input, cx| input.set_masked(true, cx));
+        let masked = |fixture: &mut BidiInputFixture| {
+            fixture
+                .cx
+                .update_window(fixture.window.into(), |_, window, _| {
+                    window
+                        .a11y_tree()
+                        .map(|tree| {
+                            tree.nodes
+                                .iter()
+                                .any(|(_, node)| node.role() == accesskit::Role::PasswordInput)
+                        })
+                        .unwrap_or(false)
+                })
+                .unwrap()
+        };
+        fixture
+            .cx
+            .update_window(fixture.window.into(), |_, window, _| {
+                window.set_a11y_forced(true)
+            })
+            .unwrap();
+        fixture.cx.run_until_parked();
+        assert!(masked(&mut fixture));
+
+        fixture.update_input(|input, cx| input.set_masked(false, cx));
+        assert!(!masked(&mut fixture));
     }
 
     #[test]

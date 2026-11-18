@@ -4344,7 +4344,12 @@ impl Interactivity {
         style
     }
 
-    pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+    /// Writes the element's accessibility properties (its `aria_*` label,
+    /// description, states and values, and the actions its listeners
+    /// support) to `node`. An element of another crate built on
+    /// [`Interactivity`] calls this from its [`Element::write_a11y_info`], so
+    /// what its author set reaches assistive technology.
+    pub fn write_a11y_info(&self, node: &mut accesskit::Node) {
         if let Some(id) = &self.aria.author_id {
             node.set_author_id(id.to_string());
         }
