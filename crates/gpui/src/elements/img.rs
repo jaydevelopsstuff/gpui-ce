@@ -283,6 +283,21 @@ impl Element for Img {
         self.interactivity.source_location()
     }
 
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        // As a div's: what its author set, never a bare container
+        self.interactivity
+            .override_role
+            .filter(|role| *role != accesskit::Role::GenericContainer)
+    }
+
+    fn is_a11y_hidden(&self) -> bool {
+        self.interactivity.aria.hidden
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.interactivity.write_a11y_info(node);
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -848,6 +863,21 @@ mod tests {
                 });
             },
         )
+    }
+
+    #[test]
+    fn its_role_and_label_reach_assistive_technology() {
+        let image = img(test_image(1))
+            .id("icon")
+            .role(accesskit::Role::Image)
+            .aria_label("App Icon");
+        assert_eq!(image.a11y_role(), Some(accesskit::Role::Image));
+        let mut node = accesskit::Node::new(accesskit::Role::Image);
+        image.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some("App Icon"));
+
+        // Without a role, as a div, it isn't in the tree
+        assert_eq!(img(test_image(1)).id("plain").a11y_role(), None);
     }
 
     #[gpui::test]
