@@ -22,6 +22,11 @@ impl Pasteboard {
         Self::new(NSPasteboard::generalPasteboard())
     }
 
+    /// The pasteboard named `name`, made if it doesn't exist yet.
+    pub fn named(name: &str) -> Self {
+        Self::new(NSPasteboard::pasteboardWithName(&NSString::from_str(name)))
+    }
+
     pub fn find() -> Self {
         Self::new(NSPasteboard::pasteboardWithName(unsafe {
             NSPasteboardNameFind
@@ -334,6 +339,20 @@ mod tests {
                 .inner
                 .setString_forType(&joined, unsafe { NSPasteboardTypeString })
         );
+    }
+
+    #[test]
+    fn test_named_pasteboard_is_its_own() {
+        let _guard = PASTEBOARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let name = format!("dev.gpui.test-named-{}", std::process::id());
+        let pasteboard = Pasteboard::named(&name);
+        let item = ClipboardItem::new_string("named".to_string());
+        pasteboard.write(item.clone());
+        // Another handle on the same name reads what this one wrote
+        assert_eq!(Pasteboard::named(&name).read(), Some(item));
+        let _: () = unsafe { objc2::msg_send![&*pasteboard.inner, releaseGlobally] };
     }
 
     #[test]

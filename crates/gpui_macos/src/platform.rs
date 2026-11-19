@@ -541,6 +541,10 @@ impl Platform for MacPlatform {
         self.0.lock().activation_policy = Some(policy);
     }
 
+    fn set_mac_clipboard_pasteboard(&self, name: &str) {
+        self.0.lock().general_pasteboard = Pasteboard::named(name);
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         let mut state = self.0.lock();
         if state.headless {

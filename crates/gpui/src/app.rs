@@ -315,6 +315,22 @@ impl Application {
         self
     }
 
+    /// Uses the pasteboard named `name` as the clipboard instead of the general
+    /// one (macOS only): every read and write of the clipboard goes to it,
+    /// [`App::read_from_clipboard`] and [`App::write_to_clipboard`] and the
+    /// text input's cut, copy and paste among them. For runs that mustn't touch
+    /// the user's clipboard, such as automated tests driving a real app. The
+    /// find pasteboard is unaffected.
+    ///
+    /// Call it before the application launches. The method exists only on
+    /// macOS, so cross-platform code calls it behind
+    /// `#[cfg(target_os = "macos")]`.
+    #[cfg(target_os = "macos")]
+    pub fn with_mac_clipboard_pasteboard(self, name: &str) -> Self {
+        self.0.borrow().platform.set_mac_clipboard_pasteboard(name);
+        self
+    }
+
     /// Starts the event loop and calls `on_finish_launching` once the app has launched.
     ///
     /// The callback runs on the main thread with the [`App`], and runs once. Open your
