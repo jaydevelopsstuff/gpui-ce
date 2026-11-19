@@ -9,15 +9,16 @@ use crate::{
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, Motion, MouseButton,
     MouseEvent, MouseMoveEvent, MouseUpEvent, PaintSurface, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, RasterizedGlyphFormat, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ResolvedDirection,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledFilter, ScaledPixels,
-    Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Transition, TransitionState,
-    Underline, UnderlineStyle, UnicodeBidi, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    Primitive, Priority, PromptButton, PromptLevel, Quad, RasterizedGlyphFormat, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    ResolvedDirection, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledFilter, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Transition, TransitionState, Underline, UnderlineStyle, UnicodeBidi, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem,
     gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer},
     interactive::TouchEvent,
     point, px, rems, size, transparent_black,
@@ -1319,6 +1320,8 @@ pub struct Window {
     pub(crate) measurement_unicode_bidi: UnicodeBidi,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    /// The alpha what's painted now is scaled by, the product of the fades it's inside
+    element_fade: f32,
     /// Bounds of the parent `Div` currently prepainting this element as one of its children.
     /// Inset transitions use these bounds to resolve `auto` from the child's rendered position.
     style_transition_containing_bounds: Option<Bounds<Pixels>>,
@@ -2078,6 +2081,7 @@ impl Window {
             measurement_unicode_bidi: UnicodeBidi::Normal,
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            element_fade: 1.0,
             style_transition_containing_bounds: None,
             content_mask_stack: Vec::new(),
             requested_autoscroll: None,
@@ -4147,6 +4151,34 @@ impl Window {
         self.with_filter_boundary(boundary, paint)
     }
 
+    /// Paints with everything scaled to `fade` alpha (multiplied into any fade already in
+    /// effect), as [`crate::Styled::fade`] asks.
+    pub(crate) fn with_element_fade<R>(
+        &mut self,
+        fade: Option<f32>,
+        paint: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+        let Some(fade) = fade else {
+            return paint(self);
+        };
+        let outer = self.element_fade;
+        self.element_fade = outer * fade.clamp(0.0, 1.0);
+        let result = paint(self);
+        self.element_fade = outer;
+        result
+    }
+
+    /// Inserts a primitive painted now, faded by the fades it's painted inside. Content-filter
+    /// boundaries go straight into the scene, as does paint reused from the last frame.
+    fn insert_painted(&mut self, primitive: impl Into<Primitive>) {
+        let mut primitive = primitive.into();
+        if self.element_fade < 1.0 {
+            primitive.fade(self.element_fade);
+        }
+        self.next_frame.scene.insert_primitive(primitive);
+    }
+
     fn with_filter_boundary<R>(
         &mut self,
         boundary: FilterBoundary,
@@ -4612,7 +4644,7 @@ impl Window {
                 corner_radii
             };
 
-            self.next_frame.scene.insert_primitive(Shadow {
+            self.insert_painted(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: self.cover_bounds(shadow_bounds),
@@ -4676,7 +4708,7 @@ impl Window {
             return;
         }
 
-        self.next_frame.scene.insert_primitive(BackdropFilter {
+        self.insert_painted(BackdropFilter {
             order: 0,
             bounds: self.snap_bounds(bounds),
             content_mask: self.snapped_content_mask(),
@@ -4802,7 +4834,7 @@ impl Window {
         };
 
         if !quad.background.is_transparent() {
-            self.next_frame.scene.insert_primitive(quad);
+            self.insert_painted(quad);
             return;
         }
 
@@ -4812,7 +4844,7 @@ impl Window {
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
-            self.next_frame.scene.insert_primitive(quad);
+            self.insert_painted(quad);
             return;
         }
 
@@ -4842,7 +4874,7 @@ impl Window {
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
-                self.next_frame.scene.insert_primitive(Quad {
+                self.insert_painted(Quad {
                     content_mask: ContentMask {
                         bounds: content_mask_bounds,
                         ..Default::default()
@@ -4864,9 +4896,7 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color;
-        self.next_frame
-            .scene
-            .insert_primitive(path.scale(scale_factor));
+        self.insert_painted(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -4892,7 +4922,7 @@ impl Window {
             size: size(self.snap_stroke(width), height),
         };
 
-        self.next_frame.scene.insert_primitive(Underline {
+        self.insert_painted(Underline {
             order: 0,
             padding: 0,
             bounds,
@@ -4921,7 +4951,7 @@ impl Window {
             size: size(self.snap_stroke(width), self.snap_stroke(height)),
         };
 
-        self.next_frame.scene.insert_primitive(Underline {
+        self.insert_painted(Underline {
             order: 0,
             padding: 0,
             bounds,
@@ -4997,7 +5027,7 @@ impl Window {
 
         match entry.format {
             RasterizedGlyphFormat::AlphaMask => {
-                self.next_frame.scene.insert_primitive(MonochromeSprite {
+                self.insert_painted(MonochromeSprite {
                     order: 0,
                     padding: 0,
                     bounds,
@@ -5008,7 +5038,7 @@ impl Window {
                 });
             }
             RasterizedGlyphFormat::BgraSubpixelMask => {
-                self.next_frame.scene.insert_primitive(SubpixelSprite {
+                self.insert_painted(SubpixelSprite {
                     order: 0,
                     padding: 0,
                     bounds,
@@ -5019,7 +5049,7 @@ impl Window {
                 });
             }
             RasterizedGlyphFormat::BgraColor => {
-                self.next_frame.scene.insert_primitive(PolychromeSprite {
+                self.insert_painted(PolychromeSprite {
                     order: 0,
                     grayscale: false.into(),
                     corner_smoothing: 0.0,
@@ -5163,7 +5193,7 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        self.insert_painted(MonochromeSprite {
             order: 0,
             padding: 0,
             bounds: final_bounds,
@@ -5300,7 +5330,7 @@ impl Window {
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
 
-        self.next_frame.scene.insert_primitive(PolychromeSprite {
+        self.insert_painted(PolychromeSprite {
             order: 0,
             grayscale: grayscale.into(),
             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
@@ -5326,7 +5356,7 @@ impl Window {
 
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
-        self.next_frame.scene.insert_primitive(PaintSurface {
+        self.insert_painted(PaintSurface {
             order: 0,
             bounds,
             content_mask,

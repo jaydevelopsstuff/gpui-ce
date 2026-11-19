@@ -406,6 +406,27 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
+    /// Scales the alpha of everything this primitive paints by `factor` (0–1), as an element's
+    /// fade paints it ([`crate::Styled::fade`]). A surface and a content-filter boundary are
+    /// left as they are: a surface has no alpha of its own, and a boundary's content is faded
+    /// itself.
+    pub fn fade(&mut self, factor: f32) {
+        match self {
+            Primitive::Shadow(shadow) => shadow.color = shadow.color.opacity(factor),
+            Primitive::Quad(quad) => {
+                quad.background = quad.background.opacity(factor);
+                quad.border_color = quad.border_color.opacity(factor);
+            }
+            Primitive::Path(path) => path.color = path.color.opacity(factor),
+            Primitive::Underline(underline) => underline.color.a *= factor,
+            Primitive::MonochromeSprite(sprite) => sprite.color.a *= factor,
+            Primitive::SubpixelSprite(sprite) => sprite.color.a *= factor,
+            Primitive::PolychromeSprite(sprite) => sprite.opacity *= factor,
+            Primitive::BackdropFilter(filter) => filter.opacity *= factor,
+            Primitive::Surface(_) | Primitive::FilterBoundary(_) => {}
+        }
+    }
+
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
@@ -1721,5 +1742,38 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn fade_scales_the_alpha_of_what_a_primitive_paints() {
+        let color = crate::hsla(0.0, 1.0, 0.5, 0.8);
+        let mut quad = Primitive::Quad(Quad {
+            background: color.into(),
+            border_color: color.into(),
+            ..quad()
+        });
+        quad.fade(0.5);
+        let Primitive::Quad(quad) = quad else {
+            unreachable!()
+        };
+        assert_eq!(quad.background.as_solid().map(|c| (c.alpha * 100.0).round() / 100.0), Some(0.4));
+        assert_eq!(quad.border_color.as_solid().map(|c| (c.alpha * 100.0).round() / 100.0), Some(0.4));
+
+        let mut sprite = Primitive::PolychromeSprite(polychrome_sprite(0));
+        sprite.fade(0.25);
+        let Primitive::PolychromeSprite(sprite) = sprite else {
+            unreachable!()
+        };
+        assert_eq!(sprite.opacity, 0.25);
+
+        let mut shadow = Primitive::Shadow(Shadow {
+            color: color.into(),
+            ..shadow()
+        });
+        shadow.fade(0.5);
+        let Primitive::Shadow(shadow) = shadow else {
+            unreachable!()
+        };
+        assert_eq!(shadow.color.as_solid().map(|c| (c.alpha * 100.0).round() / 100.0), Some(0.4));
     }
 }

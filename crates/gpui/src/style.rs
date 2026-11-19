@@ -391,6 +391,10 @@ pub struct Style {
     /// Opacity applied to this element and its children after compositing them as a group.
     pub opacity: Option<f32>,
 
+    /// Alpha this element and its children paint with, scaled into each one's own colors
+    /// rather than composited as a group: see [`crate::Styled::fade`].
+    pub fade: Option<f32>,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -991,37 +995,40 @@ impl Style {
         cx: &mut App,
         continuation: impl FnOnce(&mut Window, &mut App),
     ) {
-        // A translucent element's backdrop is painted outside its opacity group, at its opacity.
-        // Inside, the backdrop would replace only the group's own empty target, and the group
-        // composited over the content it blurred would let that content show through, in a
-        // translucent window, until the element turned opaque.
-        let opacity = self.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
-        let backdrop_outside = opacity < 1.0
-            && !self.backdrop_filter.is_empty()
-            && window.current_inline_fragments.is_none();
-        if backdrop_outside && opacity > 0.0 {
-            let (corner_radii, corner_smoothing) = self.corners(bounds, window);
-            window.paint_backdrop_filter_with_opacity(
-                bounds,
-                corner_radii,
-                corner_smoothing,
-                &self.backdrop_filter,
-                opacity,
-            );
-        }
-
-        window.with_element_opacity(self.opacity, |window| {
-            if let Some(fragments) = window.current_inline_fragments.clone() {
-                for fragment in fragments.iter() {
-                    self.paint_box(*fragment, true, window, cx, |_, _| {});
-                }
-
-                continuation(window, cx);
-
-                return;
+        // A fade scales everything painted inside it, the backdrop included
+        window.with_element_fade(self.fade, |window| {
+            // A translucent element's backdrop is painted outside its opacity group, at its opacity.
+            // Inside, the backdrop would replace only the group's own empty target, and the group
+            // composited over the content it blurred would let that content show through, in a
+            // translucent window, until the element turned opaque.
+            let opacity = self.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+            let backdrop_outside = opacity < 1.0
+                && !self.backdrop_filter.is_empty()
+                && window.current_inline_fragments.is_none();
+            if backdrop_outside && opacity > 0.0 {
+                let (corner_radii, corner_smoothing) = self.corners(bounds, window);
+                window.paint_backdrop_filter_with_opacity(
+                    bounds,
+                    corner_radii,
+                    corner_smoothing,
+                    &self.backdrop_filter,
+                    opacity,
+                );
             }
 
-            self.paint_box(bounds, !backdrop_outside, window, cx, continuation);
+            window.with_element_opacity(self.opacity, |window| {
+                if let Some(fragments) = window.current_inline_fragments.clone() {
+                    for fragment in fragments.iter() {
+                        self.paint_box(*fragment, true, window, cx, |_, _| {});
+                    }
+
+                    continuation(window, cx);
+
+                    return;
+                }
+
+                self.paint_box(bounds, !backdrop_outside, window, cx, continuation);
+            });
         });
     }
 
@@ -1205,6 +1212,7 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            fade: None,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,

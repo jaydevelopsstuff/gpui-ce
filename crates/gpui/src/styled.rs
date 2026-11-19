@@ -995,6 +995,17 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Fades this element and its children to `fade` (0–1) by scaling the alpha of everything
+    /// they paint, where [`opacity`](Self::opacity) renders them offscreen and composites them
+    /// as one group. Far cheaper, so suited to many elements fading at once (the cells of a
+    /// list, say), but children that overlap show through each other while faded. Nested fades
+    /// multiply. Not faded: a surface, what's painted deferred ([`crate::deferred`]), and a
+    /// cached view's paint reused from a frame painted at another fade.
+    fn fade(mut self, fade: f32) -> Self {
+        self.style().fade = Some(fade);
+        self
+    }
+
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {
