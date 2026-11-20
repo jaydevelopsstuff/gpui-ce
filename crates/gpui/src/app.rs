@@ -855,6 +855,7 @@ pub struct App {
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) app_menu_validator: Option<Rc<dyn Fn(&dyn Action, &mut App) -> bool>>,
+    pub(crate) app_menu_retitler: Option<Rc<dyn Fn(&dyn Action, &mut App) -> Option<SharedString>>>,
     pub(crate) active_drag: Option<AnyDrag>,
     platform_owned_drag: Option<PlatformOwnedDrag>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -985,6 +986,7 @@ impl App {
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 app_menu_validator: None,
+                app_menu_retitler: None,
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
@@ -2997,6 +2999,18 @@ impl App {
         validate: impl Fn(&dyn Action, &mut App) -> bool + 'static,
     ) {
         self.app_menu_validator = Some(Rc::new(validate));
+    }
+
+    /// Gives menu bar items a title of the moment, as the platform validates
+    /// them (when a menu opens, and when a key equivalent is pressed): an
+    /// Undo item that names what it would undo, say. `None` leaves an item's
+    /// title as it last was. macOS only; elsewhere items keep the titles
+    /// they were built with.
+    pub fn on_retitle_app_menu_action(
+        &mut self,
+        retitle: impl Fn(&dyn Action, &mut App) -> Option<SharedString> + 'static,
+    ) {
+        self.app_menu_retitler = Some(Rc::new(retitle));
     }
 
     /// Replaces the app's menu bar with `menus`.

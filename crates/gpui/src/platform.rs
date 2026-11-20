@@ -275,6 +275,14 @@ pub trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+    /// The title a menu bar item should have now, asked as it's validated;
+    /// `None` leaves it as it is. Platforms whose menus can't be retitled
+    /// as they're validated ignore it.
+    fn on_retitle_app_menu_command(
+        &self,
+        _callback: Box<dyn FnMut(&dyn Action) -> Option<SharedString>>,
+    ) {
+    }
 
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);

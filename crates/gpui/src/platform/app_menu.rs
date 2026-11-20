@@ -425,6 +425,18 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
         }
     }));
 
+    platform.on_retitle_app_menu_command(Box::new({
+        let cx = cx.to_async();
+        move |action| {
+            let app = cx.app.upgrade()?;
+            let mut app = app.borrow_mut();
+            app.update(|cx| {
+                let retitle = cx.app_menu_retitler.clone()?;
+                retitle(action, cx)
+            })
+        }
+    }));
+
     platform.on_app_menu_action(Box::new({
         let cx = cx.to_async();
         move |action| {

@@ -19,8 +19,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, MacActivationPolicy, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
     Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
-    WindowParams, popup::PopupNotSupportedError,
+    PlatformWindow, Result, SharedString, SystemMenuType, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -206,6 +206,7 @@ pub(crate) struct MacPlatformState {
     quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    retitle_menu_command: Option<Box<dyn FnMut(&dyn Action) -> Option<SharedString>>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
     menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
@@ -244,6 +245,7 @@ impl MacPlatform {
             quit: None,
             menu_command: None,
             validate_menu_command: None,
+            retitle_menu_command: None,
             will_open_menu: None,
             menu_actions: Default::default(),
             open_urls: None,
@@ -1023,6 +1025,13 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
+    fn on_retitle_app_menu_command(
+        &self,
+        callback: Box<dyn FnMut(&dyn Action) -> Option<SharedString>>,
+    ) {
+        self.0.lock().retitle_menu_command = Some(callback);
+    }
+
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_thermal_state_change = Some(callback);
     }
@@ -1522,7 +1531,33 @@ fn validate_menu_item(this: &GPUIApplicationDelegate, item: &NSMenuItem) -> bool
             .validate_menu_command
             .get_or_insert(callback);
     }
+    retitle_menu_item(platform, item);
     result
+}
+
+/// Retitles `item` as the app asks while it's validated, as AppKit apps
+/// retitle Undo in `validateMenuItem:`. AppKit validates an item before its
+/// menu is drawn, so the new title is the one shown.
+fn retitle_menu_item(platform: &MacPlatform, item: &NSMenuItem) {
+    let mut lock = platform.0.lock();
+    let Some(mut callback) = lock.retitle_menu_command.take() else {
+        return;
+    };
+    let action = lock
+        .menu_actions
+        .get(item.tag() as usize)
+        .map(|action| action.boxed_clone());
+    drop(lock);
+    if let Some(title) = action.and_then(|action| callback(action.as_ref()))
+        && item.title().to_string() != title.as_ref()
+    {
+        item.setTitle(&ns_string(&title));
+    }
+    platform
+        .0
+        .lock()
+        .retitle_menu_command
+        .get_or_insert(callback);
 }
 
 fn menu_will_open(this: &GPUIApplicationDelegate) {
