@@ -736,10 +736,20 @@ impl PrelayoutState {
                     unicode_bidi,
                 };
 
-                if let Some(size) = self.prev_layout_state.size
+                // Against the layout the state holds now, not the one it held
+                // when this frame began: taffy measures an element more than
+                // once a frame (its intrinsic sizes, then its final width),
+                // and each measurement that shapes stores its document. Were
+                // the cache keyed by the frame's snapshot, a measurement
+                // matching it would return without storing, leaving the
+                // document of an earlier, different measurement to be
+                // painted, so centered text would alternate between its
+                // centered and its unaligned layout from frame to frame.
+                let current = self.state.read(cx).layout_data.state;
+                if let Some(size) = current.size
                     && truncation.width.is_none()
-                    && self.storage_version == self.prev_layout_state.last_seen_storage_version
-                    && self.prev_layout_state.options == options
+                    && self.storage_version == current.last_seen_storage_version
+                    && current.options == options
                 {
                     return size;
                 }
@@ -2045,6 +2055,68 @@ mod tests {
                 "fixture did not cross enough device pixels at scale {scale_factor}"
             );
         }
+    }
+
+    /// A centered single-line field that grows to fill its row, in a column
+    /// that centers its children: taffy measures it at its intrinsic sizes
+    /// before its final width.
+    struct CenteredRowView {
+        input: Entity<EditableTextState>,
+    }
+
+    impl Render for CenteredRowView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().flex().flex_col().items_center().child(
+                div().w_full().flex().flex_col().items_center().child(
+                    div().w_full().flex().items_center().child(
+                        div().flex_1().min_w_0().flex().child(
+                            text_input("input")
+                                .state(self.input.downgrade())
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(20.0))
+                                .text_center()
+                                .whitespace_nowrap()
+                                .overflow_x_scroll()
+                                .selection_color(SELECTION_COLOR)
+                                .text_size(px(14.0)),
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    #[test]
+    fn centered_editable_text_keeps_its_alignment_across_frames() {
+        let text = "XXXX";
+        let mut cx = HeadlessAppContext::new(Arc::new(TestTextSystem));
+        let window = cx
+            .open_window(size(px(420.0), px(260.0)), |_window, cx| {
+                let input = cx.new(|cx| {
+                    let mut state = EditableTextState::new(StringStorage::from(text), cx);
+                    state.select_document(cx);
+                    state
+                });
+                cx.new(|_| CenteredRowView { input })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let mut origins = HashSet::new();
+        for _ in 0..6 {
+            window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+            cx.run_until_parked();
+            let selection = only_quad(&mut cx, window.into(), SELECTION_COLOR);
+            origins.insert(selection.origin.x.as_f32() as i32);
+        }
+        assert_eq!(
+            origins.len(),
+            1,
+            "centered text moved between frames: {origins:?}"
+        );
+        let x = origins.into_iter().next().unwrap_or_default();
+        assert!(x > 100, "text isn't centered: it starts at {x}");
     }
 
     #[test]
